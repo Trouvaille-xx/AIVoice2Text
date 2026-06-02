@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei UI', -apple-system,
+      BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    color: #1a1d29;
+  }
+}
+
+@layer components {
+  /* 玻璃面板基础 */
+  .glass {
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+  }
+
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(60px) saturate(200%);
+    -webkit-backdrop-filter: blur(60px) saturate(200%);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+  }
+
+  /* 录音中的脉冲外环 */
+  .recording-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    border: 2px solid rgba(91, 141, 239, 0.6);
+    animation: pulseRing 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulseRing {
+    0% {
+      transform: scale(0.85);
+      opacity: 0.7;
+    }
+    100% {
+      transform: scale(1.6);
+      opacity: 0;
+    }
+  }
+
+  /* 音量条 */
+  .voice-bar {
+    width: 3px;
+    background: linear-gradient(180deg, #5b8def 0%, #9b7ef8 100%);
+    border-radius: 2px;
+    transform-origin: center;
+    animation: voiceBar 1.1s ease-in-out infinite;
+  }
+
+  .voice-bar:nth-child(1) {
+    animation-delay: 0s;
+  }
+  .voice-bar:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .voice-bar:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  .voice-bar:nth-child(4) {
+    animation-delay: 0.45s;
+  }
+  .voice-bar:nth-child(5) {
+    animation-delay: 0.6s;
+  }
+
+  @keyframes voiceBar {
+    0%,
+    100% {
+      transform: scaleY(0.3);
+    }
+    50% {
+      transform: scaleY(1);
+    }
+  }
+
+  /* Shimmer - 骨架屏 */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.6) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  /* 拖拽手柄 */
+  .drag-handle {
+    -webkit-app-region: drag;
+    cursor: move;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
