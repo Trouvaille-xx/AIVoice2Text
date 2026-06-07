@@ -327,17 +327,22 @@ export function SettingsPanel() {
                       <div
                         key={p.id}
                         onClick={() => {
-                          // 点击卡片 → 编辑
+                          // 内置：点击卡片不做任何事（不能编辑/删除）
+                          // 自定义：点击卡片 → 编辑
                           if (!p.isBuiltin) {
                             setEditingPromptId(p.id);
                             setPromptForm({ name: p.name, description: p.description, prompt: p.prompt });
                             setShowPromptForm(true);
                           }
                         }}
-                        className={`relative p-2 rounded-lg border transition cursor-pointer flex items-center gap-3 ${
-                          isSelected
-                            ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-400/30'
-                            : 'border-white/60 bg-white/40 hover:bg-white/60'
+                        className={`relative p-2 rounded-lg border transition flex items-center gap-3 ${
+                          p.isBuiltin
+                            ? isSelected
+                              ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-400/30 cursor-default'
+                              : 'border-white/60 bg-white/40 cursor-default'
+                            : isSelected
+                              ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-400/30 cursor-pointer'
+                              : 'border-white/60 bg-white/40 hover:bg-white/60 cursor-pointer'
                         }`}
                       >
                         <div className="text-xl">{p.id === 'builtin-standard' ? '📝' : p.id === 'builtin-formal' ? '📧' : p.id === 'builtin-chat' ? '💬' : p.id === 'builtin-blog' ? '📰' : p.id === 'builtin-vibecoding' ? '💻' : p.id === 'builtin-lindaiyu' ? '🌸' : '✨'}</div>
@@ -349,10 +354,38 @@ export function SettingsPanel() {
                           </div>
                           <p className="text-[11px] text-ink-500 truncate">{p.description}</p>
                         </div>
-                        {/* 勾选按钮 */}
-                        <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {/* 右侧操作：勾选 + (仅自定义) 编辑/删除 */}
+                        <div className="shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          {!p.isBuiltin && (
+                            <>
+                              <button
+                                title="编辑"
+                                onClick={() => {
+                                  setEditingPromptId(p.id);
+                                  setPromptForm({ name: p.name, description: p.description, prompt: p.prompt });
+                                  setShowPromptForm(true);
+                                }}
+                                className="w-6 h-6 rounded text-ink-400 hover:text-primary-500 hover:bg-primary-50 text-[11px] flex items-center justify-center"
+                              >✎</button>
+                              <button
+                                title="删除"
+                                onClick={() => {
+                                  if (!confirm(`删除自定义提示词"${p.name}"？\n绑定到该提示词的快捷键也会一并解除。`)) return;
+                                  const newPrompts = form.llm.prompts.filter((x: any) => x.id !== p.id);
+                                  const newSel = (form.llm.selectedPromptIds || []).filter((id: string) => id !== p.id);
+                                  update('llm.prompts', newPrompts);
+                                  update('llm.selectedPromptIds', newSel);
+                                  if (form.llm.activePromptId === p.id) {
+                                    update('llm.activePromptId', 'builtin-standard');
+                                  }
+                                }}
+                                className="w-6 h-6 rounded text-ink-400 hover:text-red-500 hover:bg-red-50 text-[11px] flex items-center justify-center"
+                              >🗑</button>
+                            </>
+                          )}
                           {isSelected ? (
                             <button
+                              title="解除绑定"
                               onClick={() => {
                                 const ids = [...form.llm.selectedPromptIds];
                                 ids.splice(selIdx, 1);
@@ -362,6 +395,7 @@ export function SettingsPanel() {
                             >{selIdx + 1}</button>
                           ) : (
                             <button
+                              title="绑定到下一个空闲快捷键"
                               onClick={() => {
                                 const ids = [...(form.llm.selectedPromptIds || [])];
                                 if (ids.length >= 5) return;

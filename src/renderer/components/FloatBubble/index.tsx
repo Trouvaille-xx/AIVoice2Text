@@ -22,6 +22,39 @@ function accelToDisplay(s: string): string {
 
 type BubbleState = 'idle' | 'recording' | 'transcribing' | 'processing' | 'preview';
 
+/**
+ * 判断 KeyboardEvent 是否匹配 Electron accelerator 字符串
+ * 例: matchesAccel('Shift+!', ev) / matchesAccel('Ctrl+Alt+1', ev) / matchesAccel('Escape', ev)
+ * 支持的 modifier: Alt / Control / CommandOrControl / Shift
+ * 注意：
+ *   - 'Shift+!' 在 US 键盘的 e.key 是 '!'（带 shiftKey=true）
+ *   - 'Shift+2' 的 e.key 也是 '@'（带 shiftKey=true），两个写法都能匹配同一物理键
+ *   - 不支持 Cmd vs Ctrl 区分（mac/win 通用，按 ctrlKey/metaKey 任一为 Ctrl 处理）
+ */
+function matchesAccel(accelerator: string | undefined, e: KeyboardEvent): boolean {
+  if (!accelerator) return false;
+  const parts = accelerator.split('+').map((p) => p.trim().toLowerCase());
+  if (parts.length === 0) return false;
+  const keyToken = parts[parts.length - 1];
+  const mods = new Set(parts.slice(0, -1));
+
+  const wantAlt = mods.has('alt');
+  const wantCtrl = mods.has('control') || mods.has('commandorcontrol') || mods.has('cmd');
+  const wantShift = mods.has('shift');
+  const hasCtrl = e.ctrlKey || e.metaKey;
+
+  if (wantAlt !== e.altKey) return false;
+  if (wantCtrl !== hasCtrl) return false;
+  if (wantShift !== e.shiftKey) return false;
+
+  // 匹配 key：直接按字面量比（大小写不敏感）
+  // 兜底：用 e.code 也比一次，处理非英文键盘 layout
+  if (e.key.toLowerCase() === keyToken) return true;
+  // 数字键：'1' / '!' 都能用 Digit1 code 兜底
+  if (/^\d$/.test(keyToken) && e.code === `Digit${keyToken}`) return true;
+  return false;
+}
+
 export function FloatBubble() {
   // ───── 状态：朴素 React state，无任何动画库 ─────
   const [state, setState] = useState<BubbleState>('idle');
@@ -156,9 +189,10 @@ export function FloatBubble() {
 
   // ───── preview 状态本地快捷键 ─────
   // 解决 Trae/VSCode 等 IDE 的全局快捷键抢占问题：
-  //   - Alt+1..5 / Ctrl+Alt+1 / Shift+2 走 globalShortcut.register 会被 IDE 静默吃掉
+  //   - Alt+1..5 / Shift+! / Shift+@ 走 globalShortcut.register 会被 IDE 静默吃掉
   //   - 主进程进入 preview 时已 focus() 浮窗 → 这里用 window keydown 兜底
   //   - 仅在 isPreview 启用，idle/recording 时不占快捷键
+  //   - 全部按 hotkeyConfig 中的实际配置匹配，不是硬编码默认
   const isPreview = state === 'preview' || state === 'processing';
   useEffect(() => {
     if (!isPreview) return;
@@ -170,39 +204,37 @@ export function FloatBubble() {
         return;
       }
 
-      const isAlt = e.altKey;
-      const isCtrl = e.ctrlKey || e.metaKey;
-      const isShift = e.shiftKey;
-
-      // Alt+1..5 → 触发对应 slot 的 AI 优化
-      if (isAlt && !isCtrl && !isShift && !e.repeat) {
-        const k = e.key;
-        if (k >= '1' && k <= '5') {
-          e.preventDefault();
-          e.stopPropagation();
-          if (text) window.voiceflow.requestPolish(text, parseInt(k, 10) - 1);
-          return;
+      // 按 hotkeyConfig 匹配 aiOptimize1..5 → requestPolish
+      if (!e.repeat) {
+        for (let i = 1; i <= 5; i++) {
+          const accel = hotkeyConfig?.[`aiOptimize${i}` as keyof typeof hotkeyConfig] as string | undefined;
+          if (accel && matchesAccel(accel, e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (text) window.voiceflow.requestPolish(text, i - 1);
+            return;
+          }
         }
       }
 
-      // Ctrl+Alt+1 → 注入原文
-      if (isCtrl && isAlt && !isShift && (e.key === '1' || e.key === '!')) {
+      // confirmInject → 注入原文
+      if (hotkeyConfig?.confirmInject && matchesAccel(hotkeyConfig.confirmInject, e)) {
         e.preventDefault();
         e.stopPropagation();
         if (text) window.voiceflow.confirmInject(text);
         return;
       }
 
-      // Shift+2 (即 "@") → 注入优化（仅在已有 polished 时）
-      if (isShift && !isAlt && !isCtrl && (e.key === '@' || (e.key === '2' && isShift))) {
+      // injectPolished → 注入优化（仅在已有 polished 时）
+      if (polished && hotkeyConfig?.injectPolished && matchesAccel(hotkeyConfig.injectPolished, e)) {
         e.preventDefault();
         e.stopPropagation();
-        if (polished) window.voiceflow.confirmInject(polished);
+        window.voiceflow.confirmInject(polished);
         return;
       }
 
       // Esc → 丢弃（与全局 cancel 一致）
-      if (e.key === 'Escape' && !isAlt && !isCtrl && !isShift) {
+      if (matchesAccel(hotkeyConfig?.cancel || 'Escape', e)) {
         e.preventDefault();
         e.stopPropagation();
         window.voiceflow.discardPreview();
@@ -213,7 +245,7 @@ export function FloatBubble() {
     // capture: true → 在 React 之前先看到 keydown
     window.addEventListener('keydown', handler, { capture: true });
     return () => window.removeEventListener('keydown', handler, { capture: true } as any);
-  }, [isPreview, text, polished]);
+  }, [isPreview, text, polished, hotkeyConfig]);
 
   return (
     <div

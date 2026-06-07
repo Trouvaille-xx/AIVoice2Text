@@ -41,7 +41,7 @@ export class TencentASRClient extends EventEmitter {
   private wsReady = false;
   // 缓冲上限：防止 WS 长时间连不上时把整段录音无限制堆在内存里
   // 16kHz 16bit mono = 32KB/s；8s 约 256KB，够覆盖一般网络抖动
-  private static readonly MAX_PENDING_BYTES = 8 * 1024 * 1024;
+  private static readonly MAX_PENDING_BYTES = 256 * 1024;
 
   constructor(config: ASRConfig) {
     super();
@@ -222,15 +222,36 @@ export class TencentASRClient extends EventEmitter {
       return;
     }
     // WS 还在握手 → 等握手完再发 end 标记（onopen 里会回放 pendingFrames）
+    // 必须同时监听 error/close：若连接失败/被关，Promise 不能挂死
+    // 否则 stopRecording() 会卡住直到 30s 兜底超时，期间所有音频都已丢
     if (this.ws.readyState === WebSocket.CONNECTING) {
       log.info('[ASR] stop() called during CONNECTING, waiting for onopen to send end');
       await new Promise<void>((resolve) => {
-        const onOpen = () => {
+        let settled = false;
+        const settle = (after?: () => Promise<void> | void) => {
+          if (settled) return;
+          settled = true;
           this.ws?.off('open', onOpen);
+          this.ws?.off('error', onError);
+          this.ws?.off('close', onClose);
+          Promise.resolve(after?.()).finally(() => resolve());
+        };
+        const onOpen = () => {
+          log.info('[ASR] stop(): WS opened, sending end marker');
           // onopen 已经回放过 pendingFrames；这里只发 end 标记
-          this.sendEndAndClose().finally(resolve);
+          settle(() => this.sendEndAndClose());
+        };
+        const onError = (err: Error) => {
+          log.warn(`[ASR] stop(): WS error during connect: ${err.message}`);
+          settle();
+        };
+        const onClose = (code: number, reason: Buffer) => {
+          log.warn(`[ASR] stop(): WS closed during connect (code=${code} reason=${reason?.toString() || ''})`);
+          settle();
         };
         this.ws!.once('open', onOpen);
+        this.ws!.once('error', onError);
+        this.ws!.once('close', onClose);
       });
       return;
     }
