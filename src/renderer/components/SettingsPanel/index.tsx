@@ -23,6 +23,9 @@ const DEFAULT_FORM = {
     model: 'gpt-4o-mini',
     systemPrompt: '',
     enableAI: true,
+    prompts: [] as any[],
+    activePromptId: 'builtin-standard',
+    selectedPromptIds: ['builtin-standard'] as string[],
   },
   hotkeys: {
     pushToTalk: 'CommandOrControl+Alt+Z',
@@ -31,9 +34,16 @@ const DEFAULT_FORM = {
     toggleMode: 'Tab',
     openSettings: 'CommandOrControl+,',
     openHistory: 'CommandOrControl+Shift+H',
+    confirmInject: 'CommandOrControl+Alt+1',
+    injectPolished: 'Shift+@',
+    aiOptimize1: 'Alt+1',
+    aiOptimize2: 'Alt+2',
+    aiOptimize3: 'Alt+3',
+    aiOptimize4: 'Alt+4',
+    aiOptimize5: 'Alt+5',
   },
   appearance: {
-    position: 'bottom-right' as const,
+    position: 'center-bottom' as const,
     opacity: 1,
     theme: 'light' as const,
   },
@@ -55,12 +65,23 @@ export function SettingsPanel() {
   const [saved, setSaved] = useState<boolean>(false);
   const [recordingKey, setRecordingKey] = useState<string | null>(null);
 
+  // 提示词管理
+  const [showPromptForm, setShowPromptForm] = useState(false);
+  const [editingPromptId, setEditingPromptId] = useState<string | null>(null);
+  const [promptForm, setPromptForm] = useState({ name: '', description: '', prompt: '' });
+
   useEffect(() => {
     window.voiceflow.getConfig().then((c) => {
       if (c) {
         setForm({
           tencentASR: { ...DEFAULT_FORM.tencentASR, ...c.tencentASR },
-          llm: { ...DEFAULT_FORM.llm, ...c.llm },
+          asr: { ...DEFAULT_FORM.asr, ...(c.asr || {}) },
+          llm: {
+            ...DEFAULT_FORM.llm,
+            ...c.llm,
+            prompts: c.llm?.prompts?.length ? c.llm.prompts : DEFAULT_FORM.llm.prompts,
+            selectedPromptIds: c.llm?.selectedPromptIds?.length ? c.llm.selectedPromptIds : DEFAULT_FORM.llm.selectedPromptIds,
+          },
           hotkeys: { ...DEFAULT_FORM.hotkeys, ...c.hotkeys },
           appearance: { ...DEFAULT_FORM.appearance, ...c.appearance },
           general: { ...DEFAULT_FORM.general, ...c.general },
@@ -144,7 +165,8 @@ export function SettingsPanel() {
           <nav className="flex flex-col gap-1">
             {[
               { key: 'asr', label: '🎙 语音识别' },
-              { key: 'llm', label: '✨ AI 优化' },
+              { key: 'llm-model', label: '🤖 优化模型' },
+              { key: 'llm-prompt', label: '💬 提示词管理' },
               { key: 'hotkey', label: '⌨️ 快捷键' },
               { key: 'appearance', label: '🎨 外观' },
               { key: 'general', label: '⚙️ 通用' },
@@ -167,51 +189,93 @@ export function SettingsPanel() {
           {/* Content */}
           <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-6 shadow-glass-sm border border-white/60 space-y-6">
             {activeSection === 'asr' && (
-              <Section title="腾讯云 ASR" desc="用于流式语音识别（实时 WebSocket 接口）">
+              <Section
+                title={
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>语音识别</span>
+                    <span className="text-[10px] px-2 py-0.5 bg-primary-400 text-white rounded font-semibold">腾讯云</span>
+                  </div>
+                }
+                desc="配置腾讯云 ASR 在线识别（每月赠送数小时免费额度）"
+              >
+                {/* 获取免费额度链接 */}
+                <div className="flex items-center justify-between px-3 py-2.5 bg-gradient-to-r from-primary-50 to-accent-50 rounded-lg border border-primary-200/50">
+                  <div>
+                    <div className="text-sm font-semibold text-ink-900">🎁 腾讯云 ASR 新用户免费额度</div>
+                    <div className="text-[11px] text-ink-500 mt-0.5">每月赠送数小时免费转写额度，足够日常使用</div>
+                  </div>
+                  <button
+                    onClick={() => window.voiceflow.openExternal('https://cloud.tencent.com/product/asr')}
+                    className="text-xs px-3 py-1.5 bg-white text-primary-600 border border-primary-300 rounded-md hover:bg-primary-50 transition font-semibold shrink-0"
+                  >
+                    前往领取 →
+                  </button>
+                </div>
+
                 <Field label="AppId">
-                  <input
-                    className={inputCls}
-                    value={form.tencentASR.appId}
-                    onChange={(e) => update('tencentASR.appId', e.target.value)}
-                    placeholder="1400000000"
-                  />
+                  <input className={inputCls} value={form.tencentASR.appId}
+                    onChange={(e) => update('tencentASR.appId', e.target.value)} placeholder="1400000000" />
                 </Field>
                 <Field label="SecretId">
-                  <input
-                    className={inputCls}
-                    value={form.tencentASR.secretId}
-                    onChange={(e) => update('tencentASR.secretId', e.target.value)}
-                    placeholder="AKID..."
-                  />
+                  <input className={inputCls} value={form.tencentASR.secretId}
+                    onChange={(e) => update('tencentASR.secretId', e.target.value)} placeholder="AKID..." />
                 </Field>
                 <Field label="SecretKey">
-                  <input
-                    type="password"
-                    className={inputCls}
-                    value={form.tencentASR.secretKey}
-                    onChange={(e) => update('tencentASR.secretKey', e.target.value)}
-                    placeholder="••••••••"
-                  />
+                  <input type="password" className={inputCls} value={form.tencentASR.secretKey}
+                    onChange={(e) => update('tencentASR.secretKey', e.target.value)} placeholder="••••••••" />
                 </Field>
                 <Field label="引擎类型">
-                  <select
-                    className={inputCls}
-                    value={form.tencentASR.engineType}
-                    onChange={(e) => update('tencentASR.engineType', e.target.value as any)}
-                  >
+                  <select className={inputCls} value={form.tencentASR.engineType}
+                    onChange={(e) => update('tencentASR.engineType', e.target.value as any)}>
                     <option value="16k_zh">中文 (16k_zh)</option>
                     <option value="16k_zh-PY">中英混合 (16k_zh-PY) ⭐</option>
                     <option value="16k_en">英文 (16k_en)</option>
                   </select>
                 </Field>
-                <Tip>
-                  申请地址：<a className="text-primary-400 underline" href="https://console.cloud.tencent.com/asr">腾讯云控制台 - 语音识别</a>
-                </Tip>
+
+                {/* 1/2/3 教程：教用户怎么获取凭证 */}
+                <div className="mt-2 px-4 py-4 bg-white/40 border border-white/60 rounded-xl space-y-3">
+                  <div className="text-sm font-semibold text-ink-900">📖 如何获取腾讯云 ASR 凭证？</div>
+                  <ol className="space-y-2.5 text-[12px] text-ink-700">
+                    <li className="flex gap-2.5">
+                      <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">1</span>
+                      <div className="flex-1">
+                        <div className="font-semibold text-ink-900">注册腾讯云账号并实名认证</div>
+                        <button onClick={() => window.voiceflow.openExternal('https://cloud.tencent.com/register')}
+                          className="text-primary-500 hover:underline text-[11px] mt-0.5">
+                          打开注册页 →
+                        </button>
+                      </div>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">2</span>
+                      <div className="flex-1">
+                        <div className="font-semibold text-ink-900">开通「语音识别 ASR」服务</div>
+                        <div className="text-[11px] text-ink-500 mt-0.5">首次开通每月赠送数小时免费额度（够日常用）</div>
+                        <button onClick={() => window.voiceflow.openExternal('https://console.cloud.tencent.com/asr')}
+                          className="text-primary-500 hover:underline text-[11px] mt-0.5">
+                          打开控制台 →
+                        </button>
+                      </div>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">3</span>
+                      <div className="flex-1">
+                        <div className="font-semibold text-ink-900">创建应用获取密钥</div>
+                        <div className="text-[11px] text-ink-500 mt-0.5">控制台 → 语音识别 → <b>应用管理</b> → 新建应用 → 复制 <code className="px-1 py-0.5 bg-ink-100 rounded">AppId</code> / <code className="px-1 py-0.5 bg-ink-100 rounded">SecretId</code> / <code className="px-1 py-0.5 bg-ink-100 rounded">SecretKey</code> 填到上面表单</div>
+                        <button onClick={() => window.voiceflow.openExternal('https://console.cloud.tencent.com/asr/app')}
+                          className="text-primary-500 hover:underline text-[11px] mt-0.5">
+                          直接打开应用管理 →
+                        </button>
+                      </div>
+                    </li>
+                  </ol>
+                </div>
               </Section>
             )}
 
-            {activeSection === 'llm' && (
-              <Section title="AI 优化" desc="可选地对识别文本进行润色（OpenAI 兼容协议）">
+            {activeSection === 'llm-model' && (
+              <Section title="优化模型" desc="配置 OpenAI 兼容的 LLM 接口">
                 <Field label="启用 AI 优化">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -248,39 +312,131 @@ export function SettingsPanel() {
                     placeholder="gpt-4o-mini"
                   />
                 </Field>
-                <Field label="System Prompt">
-                  <textarea
-                    className={`${inputCls} min-h-[140px] font-mono text-xs`}
-                    value={form.llm.systemPrompt}
-                    onChange={(e) => update('llm.systemPrompt', e.target.value)}
-                    placeholder="你是一个文本润色助手..."
-                  />
-                </Field>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() =>
-                      update(
-                        'llm.systemPrompt',
-                        '你是一个文本润色助手。任务：\n1. 去除口语化表达（嗯、那个、就是说、然后…）\n2. 修正语法错误、错别字\n3. 规范化标点符号\n4. 保持原意不变，不增删关键信息\n5. 输出简洁清晰的书面中文\n\n直接输出润色后的文本，不要任何解释或前缀。'
-                      )
-                    }
-                    className="text-xs px-3 py-1.5 bg-white/60 rounded-lg hover:bg-white/80 transition"
-                  >
-                    📋 默认模板
-                  </button>
-                  <button
-                    onClick={() =>
-                      update(
-                        'llm.systemPrompt',
-                        '你是简洁编辑。任务：把用户口述压缩为最简表达，删除所有冗余词、不改变事实。\n直接输出结果。'
-                      )
-                    }
-                    className="text-xs px-3 py-1.5 bg-white/60 rounded-lg hover:bg-white/80 transition"
-                  >
-                    ✂️ 简洁模板
-                  </button>
-                </div>
+                <Tip>配置后可在「提示词管理」中选择不同场景的提示词</Tip>
               </Section>
+            )}
+
+            {activeSection === 'llm-prompt' && (
+              <Section title="提示词管理" desc="勾选最多5个提示词绑定到 Alt+1~5 快捷键">
+                {/* 4列网格 */}
+                <div className="flex flex-col gap-2">
+                  {(form.llm.prompts || []).map((p: any) => {
+                    const selIdx = (form.llm.selectedPromptIds || []).indexOf(p.id);
+                    const isSelected = selIdx >= 0;
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => {
+                          // 点击卡片 → 编辑
+                          if (!p.isBuiltin) {
+                            setEditingPromptId(p.id);
+                            setPromptForm({ name: p.name, description: p.description, prompt: p.prompt });
+                            setShowPromptForm(true);
+                          }
+                        }}
+                        className={`relative p-2 rounded-lg border transition cursor-pointer flex items-center gap-3 ${
+                          isSelected
+                            ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-400/30'
+                            : 'border-white/60 bg-white/40 hover:bg-white/60'
+                        }`}
+                      >
+                        <div className="text-xl">{p.id === 'builtin-standard' ? '📝' : p.id === 'builtin-formal' ? '📧' : p.id === 'builtin-chat' ? '💬' : p.id === 'builtin-blog' ? '📰' : p.id === 'builtin-vibecoding' ? '💻' : p.id === 'builtin-lindaiyu' ? '🌸' : '✨'}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-ink-900">{p.name}</span>
+                            {p.isBuiltin && <span className="text-[10px] px-1 py-0.5 bg-ink-300/10 text-ink-500 rounded shrink-0">内置</span>}
+                            {isSelected && <span className="text-[10px] px-1 py-0.5 bg-primary-100 text-primary-500 rounded font-mono shrink-0">Alt+{selIdx + 1}</span>}
+                          </div>
+                          <p className="text-[11px] text-ink-500 truncate">{p.description}</p>
+                        </div>
+                        {/* 勾选按钮 */}
+                        <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {isSelected ? (
+                            <button
+                              onClick={() => {
+                                const ids = [...form.llm.selectedPromptIds];
+                                ids.splice(selIdx, 1);
+                                update('llm.selectedPromptIds', ids);
+                              }}
+                              className="w-6 h-6 rounded-full bg-primary-400 text-white text-xs font-bold flex items-center justify-center"
+                            >{selIdx + 1}</button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                const ids = [...(form.llm.selectedPromptIds || [])];
+                                if (ids.length >= 5) return;
+                                ids.push(p.id);
+                                update('llm.selectedPromptIds', ids);
+                              }}
+                              disabled={(form.llm.selectedPromptIds || []).length >= 5}
+                              className="w-6 h-6 rounded-full border-2 border-ink-300 text-ink-300 text-xs flex items-center justify-center hover:border-primary-400 hover:text-primary-400 disabled:opacity-30"
+                            >+</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 选中排序提示 */}
+                {(form.llm.selectedPromptIds || []).length > 0 && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-ink-500">
+                    <span>快捷键绑定顺序：</span>
+                    {(form.llm.selectedPromptIds || []).map((id, i) => {
+                      const p = (form.llm.prompts || []).find((x: any) => x.id === id);
+                      return (
+                        <span key={id} className="px-2 py-0.5 bg-primary-50 text-primary-500 rounded font-mono">
+                          Alt+{i + 1} {p?.name || id}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* 新建/编辑按钮 */}
+                <button onClick={() => { setShowPromptForm(true); setEditingPromptId(null); setPromptForm({ name: '', description: '', prompt: '' }); }}
+                  className="mt-3 w-full py-3 text-sm font-semibold text-primary-500 bg-white/60 border-2 border-dashed border-primary-400/30 rounded-xl hover:bg-primary-50 transition">
+                  + 新建提示词
+                </button>
+              </Section>
+            )}
+
+            {/* 提示词编辑弹窗 */}
+            {showPromptForm && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={() => { setShowPromptForm(false); setEditingPromptId(null); }}>
+                <div className="bg-white rounded-2xl shadow-glass-lg p-6 w-[480px] space-y-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="text-lg font-bold text-ink-900">{editingPromptId ? '编辑提示词' : '新建提示词'}</div>
+                  <input className={inputCls} placeholder="名称" value={promptForm.name}
+                    onChange={(e) => setPromptForm((f) => ({ ...f, name: e.target.value }))} />
+                  <input className={inputCls} placeholder="简短描述" value={promptForm.description}
+                    onChange={(e) => setPromptForm((f) => ({ ...f, description: e.target.value }))} />
+                  <textarea className={`${inputCls} min-h-[140px] font-mono text-xs`} placeholder="System Prompt 全文…"
+                    value={promptForm.prompt}
+                    onChange={(e) => setPromptForm((f) => ({ ...f, prompt: e.target.value }))} />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => { setShowPromptForm(false); setEditingPromptId(null); setPromptForm({ name: '', description: '', prompt: '' }); }}
+                      className="px-4 py-2 text-sm text-ink-700 bg-ink-100 rounded-lg hover:bg-ink-200 transition">取消</button>
+                    <button
+                      onClick={() => {
+                        if (!promptForm.name || !promptForm.prompt) return;
+                        if (editingPromptId) {
+                          update('llm.prompts', form.llm.prompts.map((p: any) =>
+                            p.id === editingPromptId ? { ...p, name: promptForm.name, description: promptForm.description, prompt: promptForm.prompt } : p));
+                        } else {
+                          const np = { id: `custom-${Date.now()}`, name: promptForm.name, description: promptForm.description, prompt: promptForm.prompt, isBuiltin: false };
+                          update('llm.prompts', [...form.llm.prompts, np]);
+                        }
+                        setShowPromptForm(false); setEditingPromptId(null);
+                        setPromptForm({ name: '', description: '', prompt: '' });
+                      }}
+                      disabled={!promptForm.name || !promptForm.prompt}
+                      className="px-5 py-2 text-sm font-semibold text-white bg-gradient-to-br from-primary-400 to-accent-500 rounded-lg hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {editingPromptId ? '💾 保存' : '✨ 创建'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {activeSection === 'hotkey' && (
@@ -289,6 +445,13 @@ export function SettingsPanel() {
                   [
                     ['pushToTalk', '推说（普通）'],
                     ['pushToTalkWithAI', '推说（带 AI 优化）'],
+                    ['confirmInject', '注入原文'],
+                    ['injectPolished', '注入AI优化结果'],
+                    ['aiOptimize1', 'AI 优化 #1'],
+                    ['aiOptimize2', 'AI 优化 #2'],
+                    ['aiOptimize3', 'AI 优化 #3'],
+                    ['aiOptimize4', 'AI 优化 #4'],
+                    ['aiOptimize5', 'AI 优化 #5'],
                     ['cancel', '取消'],
                     ['toggleMode', '切换 覆盖/追加 模式'],
                     ['openSettings', '打开设置'],
@@ -310,35 +473,43 @@ export function SettingsPanel() {
                     </button>
                   </Field>
                 ))}
-                <Tip>Esc / Tab 在应用内生效；其他快捷键为系统级全局</Tip>
+                <Tip>Esc / Tab 在录音/预览时全局生效；其他快捷键始终为系统级全局</Tip>
               </Section>
             )}
 
             {activeSection === 'appearance' && (
               <Section title="外观" desc="调整浮窗位置、透明度与主题">
                 <Field label="浮窗位置">
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map(
-                      (p) => (
+                  <div className="grid grid-cols-3 gap-2">
+                    {((
+                      [
+                        ['top-left', '左上'],
+                        ['center-top', '中上'],
+                        ['top-right', '右上'],
+                        ['bottom-left', '左下'],
+                        ['center-bottom', '中下'],
+                        ['bottom-right', '右下'],
+                      ] as const
+                    ).map(([val, label]) => (
                         <button
-                          key={p}
-                          onClick={() => update('appearance.position', p)}
+                          key={val}
+                          onClick={() => update('appearance.position', val)}
                           className={`px-3 py-2 text-sm rounded-lg border transition ${
-                            form.appearance.position === p
+                            form.appearance.position === val
                               ? 'border-primary-400 bg-primary-50 text-primary-500 font-semibold'
                               : 'border-white/60 bg-white/40 text-ink-700 hover:bg-white/60'
                           }`}
                         >
-                          {p.replace('-', ' ')}
+                          {label}
                         </button>
                       )
-                    )}
+                    ))}
                   </div>
                 </Field>
-                <Field label={`透明度 (${Math.round(form.appearance.opacity * 100)}%)`}>
+                <Field label={`不透明度 (${Math.round(form.appearance.opacity * 100)}%)`}>
                   <input
                     type="range"
-                    min="0.5"
+                    min="0.1"
                     max="1"
                     step="0.05"
                     value={form.appearance.opacity}
@@ -424,7 +595,7 @@ function Section({
   desc,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   desc: string;
   children: React.ReactNode;
 }) {

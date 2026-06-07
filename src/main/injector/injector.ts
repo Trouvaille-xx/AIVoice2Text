@@ -18,38 +18,99 @@ export interface InjectResult {
   message: string;
 }
 
+/**
+ * 快速检测当前焦点是否在可编辑控件上（Win32 GetFocus + GetClassName）
+ * 用于快捷键按下时判断是否应该启动录音
+ */
+/**
+ * 快速检测当前焦点是否在可输入控件上。
+ * 策略：GetFocus() 获取焦点控件，与 GetForegroundWindow() 对比。
+ * - 焦点是前台窗口的子控件 → 几乎肯定是输入框（浏览器输入框、VS Code、微信等）
+ * - 焦点就是前台窗口本身 → 检查窗口类名是否为已知编辑器（Notepad、Word 等）
+ * 避免在桌面、任务栏、开始菜单等非输入场景误触发。
+ */
+export function isEditableFocused(): boolean {
+  const script = [
+    'Add-Type @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'using System.Text;',
+    'public class VFCheck {',
+    '  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+    '  [DllImport("user32.dll")] public static extern IntPtr GetFocus();',
+    '  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);',
+    '}',
+    '"@',
+    '$focus = [VFCheck]::GetFocus()',
+    'if ($focus -eq [IntPtr]::Zero) { Write-Output "EDITABLE=0"; exit 0 }',
+    '$fg = [VFCheck]::GetForegroundWindow()',
+    'if ($fg -eq [IntPtr]::Zero) { Write-Output "EDITABLE=0"; exit 0 }',
+    'if ($focus -ne $fg) { Write-Output "EDITABLE=1"; exit 0 }',
+    '$sb = New-Object System.Text.StringBuilder(256)',
+    '[VFCheck]::GetClassName($focus, $sb, 256)',
+    '$class = $sb.ToString()',
+    '$isEditor = $class -match "(?i)^(edit|richedit|scintilla|_wwg|thunderrt6|afx:|notepad|texteditor|code|richtext)"',
+    'if ($isEditor) { Write-Output "EDITABLE=1" } else { Write-Output "EDITABLE=0" }',
+  ].join('\n');
+  try {
+    const result = execSync(
+      `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(script, 'utf-16le').toString('base64')}`,
+      { encoding: 'utf-8', timeout: 3000, windowsHide: true }
+    );
+    return result.toString().includes('EDITABLE=1');
+  } catch {
+    return false;
+  }
+}
+
 /** 记录用户期望注入的目标窗口句柄（录音前抓取） */
 let savedTargetHwnd: number | null = null;
+
+/** 兜底窗口 — 点击浮窗启动录音时，浮窗自身抢占了焦点，用此前跟踪到的用户窗口 */
+let fallbackTargetHwnd: number | null = null;
+
+/**
+ * 设置兜底目标窗口（由主进程前台窗口追踪器周期性调用）
+ */
+export function setFallbackTargetHwnd(hwnd: number | null): void {
+  fallbackTargetHwnd = hwnd;
+}
 
 /**
  * 记录当前前台窗口句柄
  * 在录音开始前调用，让注入时能切回去
+ * 如果当前前台是浮窗自身，则使用 fallback（点击浮窗启动录音的场景）
  */
-export function captureTargetWindow(): void {
-  const hwnd = getForegroundHwnd();
+export function captureTargetWindow(floatHwnd?: number): void {
+  let hwnd = getForegroundHwnd();
+  // 点击浮窗启动录音时，前台窗口是浮窗自身 → 使用已跟踪的用户窗口
+  if (floatHwnd && hwnd === floatHwnd && fallbackTargetHwnd) {
+    log.info(`[injector] foreground is float, using fallback hwnd=${fallbackTargetHwnd}`);
+    hwnd = fallbackTargetHwnd;
+  }
   if (hwnd) {
     savedTargetHwnd = hwnd;
     log.info(`[injector] captured target window hwnd=${hwnd}`);
   }
 }
 
-function getForegroundHwnd(): number | null {
-  const script = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32 {
-  [DllImport("user32.dll")]
-  public static extern IntPtr GetForegroundWindow();
-}
-"@
-$hwnd = [Win32]::GetForegroundWindow()
-Write-Output ("HWND=" + $hwnd)
-`;
+export function getForegroundHwnd(): number | null {
+  const script = [
+    'Add-Type @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public class Win32 {',
+    '  [DllImport("user32.dll")]',
+    '  public static extern IntPtr GetForegroundWindow();',
+    '}',
+    '"@',
+    '$hwnd = [Win32]::GetForegroundWindow()',
+    'Write-Output ("HWND=" + $hwnd)',
+  ].join('\n');
   try {
     const result = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '`"').replace(/\n/g, ' ')}"`,
-      { encoding: 'utf-8', timeout: 5000 }
+      `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(script, 'utf-16le').toString('base64')}`,
+      { encoding: 'utf-8', timeout: 5000, windowsHide: true }
     );
     const text = result.toString();
     const m = text.match(/HWND=(\d+)/);
@@ -64,28 +125,31 @@ Write-Output ("HWND=" + $hwnd)
  * 把窗口拉到前台
  */
 function setForegroundWindow(hwnd: number): boolean {
-  const script = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32 {
-  [DllImport("user32.dll")]
-  public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")]
-  public static extern IntPtr GetForegroundWindow();
-}
-"@
-$hwnd = ${hwnd}
-[Win32]::ShowWindow($hwnd, 9) | Out-Null  # SW_RESTORE
-[Win32]::SetForegroundWindow($hwnd) | Out-Null
-Start-Sleep -Milliseconds 200
-$cur = [Win32]::GetForegroundWindow()
-Write-Output ("NEW_HWND=" + $cur)
-`;
+  const script = [
+    'Add-Type @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public class Win32 {',
+    '  [DllImport("user32.dll")]',
+    '  public static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '  [DllImport("user32.dll")]',
+    '  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);',
+    '  [DllImport("user32.dll")]',
+    '  public static extern IntPtr GetForegroundWindow();',
+    '}',
+    '"@',
+    `$hwnd = ${hwnd}`,
+    '[Win32]::ShowWindow($hwnd, 9) | Out-Null',
+    '[Win32]::SetForegroundWindow($hwnd) | Out-Null',
+    'Start-Sleep -Milliseconds 200',
+    '$cur = [Win32]::GetForegroundWindow()',
+    'Write-Output ("NEW_HWND=" + $cur)',
+  ].join('\n');
   try {
-    const result = execSync(script);
+    const result = execSync(
+      `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(script, 'utf-16le').toString('base64')}`,
+      { encoding: 'utf-8', timeout: 5000 }
+    );
     const text = result.toString();
     const m = text.match(/NEW_HWND=(\d+)/);
     if (m) return parseInt(m[1], 10) === hwnd;
@@ -111,7 +175,7 @@ export async function injectText(
     log.info(`[injector] restoring target window hwnd=${savedTargetHwnd}`);
     setForegroundWindow(savedTargetHwnd);
     // 等待窗口切换稳定
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   // 通过 UIA 查找焦点元素
@@ -126,7 +190,7 @@ export async function injectText(
   }
 
   log.info(
-    `[injector] found element: name="${element.name}" class="${element.className}" type="${element.controlType}" hasValue=${element.hasValuePattern}`
+    `[injector] found element: name="${element.name}" class="${element.className}" type="${element.controlType}" hasValue=${element.hasValuePattern} isEditable=${element.isEditable}`
   );
 
   // 策略 1: UIA ValuePattern
@@ -181,6 +245,43 @@ try {
     $p = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     if ($p -ne $null) { $hasValue = 'True' }
   } catch {}
+
+  # 如果焦点是顶层窗口 → 搜索可编辑子元素
+  if ($el -ne $null -and $controlType -eq 'ControlType.Window' -and $hasValue -eq 'False') {
+    # 策略1: 找支持 ValuePattern 的后代（最通用）
+    $vpCond = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty,
+      $true
+    )
+    $child = $el.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $vpCond)
+    # 策略2: 找 Document 或 Edit 类型的后代
+    if ($child -eq $null) {
+      $docCond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::Document
+      )
+      $child = $el.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $docCond)
+    }
+    if ($child -eq $null) {
+      $editCond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::Edit
+      )
+      $child = $el.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCond)
+    }
+    if ($child -ne $null) {
+      $el = $child
+      try { $name = $el.Current.Name } catch {}
+      try { $className = $el.Current.ClassName } catch {}
+      try { $controlType = $el.Current.ControlType.ProgrammaticName } catch {}
+      $hasValue = 'False'
+      try {
+        $p = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        if ($p -ne $null) { $hasValue = 'True' }
+      } catch {}
+    }
+  }
+
   Write-Output ("NAME=" + $name)
   Write-Output ("CLASS=" + $className)
   Write-Output ("TYPE=" + $controlType)
@@ -286,29 +387,23 @@ if ($mode -eq 'append' -or $mode -eq 'prepend') {
   Start-Sleep -Milliseconds 50
 }
 
-# 备份原剪贴板
-$originalClip = ''
-if ([System.Windows.Forms.Clipboard]::ContainsText()) {
-  $originalClip = [System.Windows.Forms.Clipboard]::GetText()
-}
-
-# 写入剪贴板
-[System.Windows.Forms.Clipboard]::SetText($text)
+# 写入剪贴板（用原生 cmdlet 更可靠）
+Set-Clipboard -Value $text
+# 关键：等剪贴板真正落地（部分 Electron/CEF 应用需要 100~200ms 才能读到）
+Start-Sleep -Milliseconds 200
 
 # 模拟 Ctrl+V
 [System.Windows.Forms.SendKeys]::SendWait('^v')
-Start-Sleep -Milliseconds 100
-
-# 恢复原剪贴板
-if ($originalClip -ne '') {
-  [System.Windows.Forms.Clipboard]::SetText($originalClip)
-}
+Start-Sleep -Milliseconds 250
 
 exit 0
 `;
     fs.writeFile(script, psScript, 'utf-8').then(() => {
+      // 关键：windowsHide:true 防止 PowerShell 窗口弹出抢焦点
+      // 否则 SendKeys '^v' 会送到 PowerShell 窗口而不是目标输入框
       exec(
         `powershell -ExecutionPolicy Bypass -NoProfile -File "${script}"`,
+        { windowsHide: true },
         (err, stdout, stderr) => {
           fs.unlink(script).catch(() => {});
           if (err) {
@@ -336,6 +431,7 @@ exit 0
     fs.writeFile(script, psScript, 'utf-8').then(() => {
       exec(
         `powershell -ExecutionPolicy Bypass -NoProfile -File "${script}"`,
+        { windowsHide: true },
         (err, stdout, stderr) => {
           fs.unlink(script).catch(() => {});
           if (err) {

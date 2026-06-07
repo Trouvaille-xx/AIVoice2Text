@@ -32,8 +32,8 @@ const api = {
   discardLLM: () => {
     ipcRenderer.send('llm:discard');
   },
-  requestPolish: (text: string) => {
-    ipcRenderer.send('llm:request-polish', { text });
+  requestPolish: (text: string, slotIndex?: number) => {
+    ipcRenderer.send('llm:request-polish', { text, slotIndex });
   },
   requestInject: (text: string) => {
     ipcRenderer.send('inject:request', { text });
@@ -58,6 +58,7 @@ const api = {
   // 窗口
   openSettings: () => ipcRenderer.send('open:settings'),
   openHistory: () => ipcRenderer.send('open:history'),
+  openExternal: (url: string) => ipcRenderer.send('open:external', url),
 
   // 事件订阅
   on: (channel: string, handler: (payload: any) => void) => {
@@ -71,12 +72,24 @@ const api = {
       'llm:chunk',
       'llm:done',
       'hotkey:toggle-mode',
+      'polish:slot',
+      'config:updated',
+      'model:progress',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_: any, payload: any) => handler(payload);
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   },
+
+  // 模型管理
+  listModels: (): Promise<any[]> => ipcRenderer.invoke('model:list'),
+  downloadModel: (modelId: string): Promise<any> => ipcRenderer.invoke('model:download', modelId),
+  cancelDownload: (modelId: string) => ipcRenderer.send('model:cancel', modelId),
+  deleteModel: (modelId: string): Promise<boolean> => ipcRenderer.invoke('model:delete', modelId),
+
+  // 发送 IPC（无返回值，用于 mouseEnter/Leave 等高频事件）
+  send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),
 
   platform: process.platform,
 };

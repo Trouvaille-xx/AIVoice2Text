@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FloatBubbleState } from '@shared/types';
+import type { FloatBubbleState, HotkeyConfig } from '@shared/types';
 
 interface VoiceflowState {
   // 浮窗状态
@@ -45,6 +45,17 @@ interface VoiceflowState {
   // 录音设备
   micDevices: MediaDeviceInfo[];
   setMicDevices: (d: MediaDeviceInfo[]) => void;
+
+  // 快捷键配置（从主进程加载）
+  hotkeyConfig: HotkeyConfig | null;
+  setHotkeyConfig: (c: HotkeyConfig) => void;
+
+  // 当前会话的 ASR provider（用于 transcribing 状态显示正确文案）
+  asrProvider: 'local' | 'tencent';
+  setAsrProvider: (p: 'local' | 'tencent') => void;
+  // 当前 ASR 引擎标签（"☁️ 腾讯云 16k_zh-PY" / "🤖 Whisper Small" 等）
+  asrLabel: string;
+  setAsrLabel: (l: string) => void;
 }
 
 export const useVoiceflowStore = create<VoiceflowState>((set) => ({
@@ -81,4 +92,12 @@ export const useVoiceflowStore = create<VoiceflowState>((set) => ({
 
   micDevices: [],
   setMicDevices: (d) => set({ micDevices: d }),
+
+  hotkeyConfig: null,
+  setHotkeyConfig: (c) => set({ hotkeyConfig: c }),
+
+  asrProvider: 'tencent',
+  setAsrProvider: (p) => set({ asrProvider: p }),
+  asrLabel: '☁️ 腾讯云',
+  setAsrLabel: (l) => set({ asrLabel: l }),
 }));

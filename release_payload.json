@@ -1,0 +1,8 @@
+{
+  "tag_name": "v0.1.0",
+  "target_commitish": "master",
+  "name": "v0.1.0",
+  "body": "## VoiceFlow v0.1.0 — 首个可用版本\n\n桌面端语音输入助手，说话自动转文字，AI 帮你润色，一键注入到任何输入框。\n\n### 特性\n- 全局语音识别 — Ctrl+Alt+Z 按住说话，腾讯云 ASR 实时转写\n- AI 文本润色 — 对接 OpenAI 兼容 API，自动去口语化、修正语法\n- 快捷键驱动 — 纯键盘操作，不碰鼠标不丢焦点\n- 三级注入策略 — UIA → 剪贴板 → SendInput 自动 fallback\n- 毛玻璃悬浮窗 — 透明置顶浮窗，显示识别/润色结果\n- 历史记录 — 本地 SQLite 存储，支持回溯和重新注入\n- 加密存储 — API Key 等敏感信息用系统安全存储加密\n\n### 技术栈\n- Electron 31 + React 18 + TypeScript\n- 腾讯云 ASR WebSocket v2（16kHz PCM）\n- OpenAI 兼容 LLM 流式接口\n- Tailwind CSS + Framer Motion\n- Zustand + better-sqlite3\n\n### 使用前需配置\n1. 腾讯云 ASR：AppId / SecretId / SecretKey\n2. LLM API：Base URL + API Key + Model\n\n详细快捷键和配置说明请查看 README。",
+  "draft": false,
+  "prerelease": false
+}

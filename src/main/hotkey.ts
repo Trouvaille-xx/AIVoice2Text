@@ -3,7 +3,7 @@
  * - 默认: Ctrl+Alt+Z 推说 / Ctrl+Alt+X 推说+AI / Esc 取消 / Tab 切模式 / Ctrl+, 设置 / Ctrl+Shift+H 历史
  * - 注册失败时降级到本地快捷键
  */
-import { globalShortcut, app, BrowserWindow } from 'electron';
+import { globalShortcut, app } from 'electron';
 import log from 'electron-log/main';
 import type { HotkeyConfig } from '@shared/types';
 
@@ -15,7 +15,12 @@ export type HotkeyAction =
   | 'open-settings'
   | 'open-history'
   | 'confirm-inject'
-  | 'ai-optimize';
+  | 'inject-polished'
+  | 'ai-optimize-1'
+  | 'ai-optimize-2'
+  | 'ai-optimize-3'
+  | 'ai-optimize-4'
+  | 'ai-optimize-5';
 
 export type HotkeyHandler = (action: HotkeyAction) => void;
 
@@ -27,7 +32,12 @@ const DEFAULTS: HotkeyConfig = {
   openSettings: 'CommandOrControl+,',
   openHistory: 'CommandOrControl+Shift+H',
   confirmInject: 'CommandOrControl+Alt+1',
-  aiOptimize: 'CommandOrControl+Alt+2',
+  injectPolished: 'Shift+@',
+  aiOptimize1: 'Alt+1',
+  aiOptimize2: 'Alt+2',
+  aiOptimize3: 'Alt+3',
+  aiOptimize4: 'Alt+4',
+  aiOptimize5: 'Alt+5',
 };
 
 export class HotkeyManager {
@@ -44,7 +54,12 @@ export class HotkeyManager {
     this.handler = h;
   }
 
-  /** 注册所有快捷键 */
+  /**
+   * 注册常驻快捷键（任何状态都可能用到）
+   * - 注入/优化类的快捷键（confirm-inject / inject-polished / ai-optimize-1..5）不进这里
+   *   它们通过 updateDynamicShortcuts() 按状态动态注册：仅在 preview 状态有效
+   *   避免 idle 状态下 Alt+1..5 / Shift+2 抢占全局快捷键、干扰其他应用
+   */
   register(): { ok: HotkeyAction[]; failed: HotkeyAction[] } {
     this.unregister();
     const ok: HotkeyAction[] = [];
@@ -53,24 +68,22 @@ export class HotkeyManager {
     const map: Array<[HotkeyAction, string]> = [
       ['push-to-talk', this.config.pushToTalk],
       ['push-to-talk-with-ai', this.config.pushToTalkWithAI],
-      ['cancel', this.config.cancel],
-      ['toggle-mode', this.config.toggleMode],
       ['open-settings', this.config.openSettings],
       ['open-history', this.config.openHistory],
-      ['confirm-inject', this.config.confirmInject],
-      ['ai-optimize', this.config.aiOptimize],
     ];
+
+    // 跟踪已注册的 accelerator，防止重复
+    const usedAccelerators = new Set<string>();
 
     for (const [action, accelerator] of map) {
       if (!accelerator) continue;
-      // Escape 单独处理：不能全局注册（会拦截用户在其他应用按 Esc）
-      if (action === 'cancel' || action === 'toggle-mode') {
-        // 这两个走"应用内"快捷键，不走 globalShortcut
-        this.installLocalShortcut(accelerator, action);
-        ok.push(action);
-        this.registered.set(action, accelerator);
+
+      // 检查是否与之前的快捷键重复
+      if (usedAccelerators.has(accelerator)) {
+        log.warn(`Hotkey duplicate skipped: ${action} = ${accelerator} (already used)`);
         continue;
       }
+
       try {
         const success = globalShortcut.register(accelerator, () => {
           this.handler?.(action);
@@ -78,6 +91,7 @@ export class HotkeyManager {
         if (success) {
           ok.push(action);
           this.registered.set(action, accelerator);
+          usedAccelerators.add(accelerator);
         } else {
           failed.push(action);
           log.warn(`Hotkey register failed: ${action} = ${accelerator}`);
@@ -93,25 +107,40 @@ export class HotkeyManager {
     return { ok, failed };
   }
 
-  /** 在浮窗窗口内注册本地快捷键（Esc/Tab） */
-  private installLocalShortcut(accelerator: string, action: HotkeyAction) {
-    // 浮窗聚焦时，通过 before-input-event 捕获
-    const win = BrowserWindow.getAllWindows().find(
-      (w) => w.webContents.getURL().includes('index.html') && !w.isDestroyed()
-    );
-    if (!win) return;
+  /** 按需注册一个全局快捷键（用于 Esc/Tab 等需要动态管理的按键） */
+  registerDynamic(action: HotkeyAction): boolean {
+    const accelerator = this.config[action as keyof HotkeyConfig] as string;
+    if (!accelerator) return false;
 
-    const accelKey = accelerator.toLowerCase();
-    win.webContents.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return;
-      if (accelKey === 'escape' && input.key === 'Escape') {
+    // 如果已注册则跳过
+    if (this.registered.has(action)) return true;
+
+    try {
+      const success = globalShortcut.register(accelerator, () => {
         this.handler?.(action);
-        event.preventDefault();
-      } else if (accelKey === 'tab' && input.key === 'Tab') {
-        this.handler?.(action);
-        event.preventDefault();
+      });
+      if (success) {
+        this.registered.set(action, accelerator);
+        log.info(`Hotkey dynamic register ok: ${action} = ${accelerator}`);
+      } else {
+        log.warn(`Hotkey dynamic register failed: ${action} = ${accelerator}`);
       }
-    });
+      return success;
+    } catch (e) {
+      log.error(`Hotkey dynamic register threw: ${action} = ${accelerator}`, e);
+      return false;
+    }
+  }
+
+  /** 取消一个动态注册的快捷键 */
+  unregisterDynamic(action: HotkeyAction) {
+    const accelerator = this.registered.get(action);
+    if (!accelerator) return;
+    try {
+      globalShortcut.unregister(accelerator);
+    } catch {}
+    this.registered.delete(action);
+    log.info(`Hotkey dynamic unregister: ${action}`);
   }
 
   unregister() {

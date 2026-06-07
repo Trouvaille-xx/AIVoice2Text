@@ -27,7 +27,8 @@ export class LLMClient {
    * 返回 AsyncIterable<string>，每段是一个 delta
    */
   async *polishStream(text: string): AsyncIterable<string> {
-    const url = new URL('/chat/completions', this.config.baseURL);
+    // 用相对路径，避免 baseURL 带路径时被覆盖（如 /v1）
+    const url = new URL('chat/completions', this.config.baseURL.endsWith('/') ? this.config.baseURL : this.config.baseURL + '/');
     const body = JSON.stringify({
       model: this.config.model,
       messages: [
@@ -68,11 +69,29 @@ export class LLMClient {
           return;
         }
 
-        let buffer = '';
+        // 实时过滤 <think>...</think> 标签
+        let rawAccum = '';
+        let lastVisibleLen = 0;
+        const filterThink = (chunk: string): string | null => {
+          rawAccum += chunk;
+          // 去掉已闭合的 think 标签及内容，也去掉未闭合的（流式中间态）
+          const visible = rawAccum
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            .replace(/<think>[\s\S]*$/gi, '');
+          // 只返回增量部分（避免每次发送完整文本造成前端抖动）
+          if (visible.length > lastVisibleLen) {
+            const delta = visible.slice(lastVisibleLen);
+            lastVisibleLen = visible.length;
+            return delta;
+          }
+          return null;
+        };
+
+        let sseBuffer = '';
         res.on('data', (chunk) => {
-          buffer += chunk.toString('utf-8');
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+          sseBuffer += chunk.toString('utf-8');
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop() || '';
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed || !trimmed.startsWith('data:')) continue;
@@ -88,7 +107,11 @@ export class LLMClient {
                 json.choices?.[0]?.message?.content ||
                 '';
               if (delta) {
-                this.queueChunk(delta);
+                // 实时过滤 think，只输出可见内容
+                const visible = filterThink(delta);
+                if (visible) {
+                  this.queueChunk(visible);
+                }
               }
             } catch (e) {
               // ignore parse error

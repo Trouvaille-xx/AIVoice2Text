@@ -76,8 +76,8 @@ export function signTencentASR(params: SignedUrlParams): string {
   log.info('========== Tencent ASR Sign Debug ==========');
   log.info(`[Sign] appId=${appId} engineModelType=${engineModelType}`);
   log.info(`[Sign] timestamp=${timestamp} expired=${timestamp + expire} nonce=${nonce}`);
-  log.info(`[Sign] queryString=${queryString}`);
-  log.info(`[Sign] signSource=${signSource}`);
+  log.info(`[Sign] queryString=${queryString.replace(/secretid=[^&]+/, 'secretid=***')}`);
+  log.info(`[Sign] signSource=${signSource.replace(/secretid=[^&]+/, 'secretid=***')}`);
   log.info(`[Sign] signature=${signature}`);
   log.info('========== End Sign Debug ==========');
 

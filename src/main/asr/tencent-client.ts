@@ -35,6 +35,13 @@ export class TencentASRClient extends EventEmitter {
   private isClosed = false;
   private voiceId = '';
   private currentAccumText = '';
+  // WS 还在握手时的音频帧缓冲：握手完成（onopen）后一次性回放
+  // 解决"录音开始后 WS 慢 3~5s 才连上、用户首句音频被丢"的问题
+  private pendingFrames: Buffer[] = [];
+  private wsReady = false;
+  // 缓冲上限：防止 WS 长时间连不上时把整段录音无限制堆在内存里
+  // 16kHz 16bit mono = 32KB/s；8s 约 256KB，够覆盖一般网络抖动
+  private static readonly MAX_PENDING_BYTES = 8 * 1024 * 1024;
 
   constructor(config: ASRConfig) {
     super();
@@ -67,7 +74,22 @@ export class TencentASRClient extends EventEmitter {
           this.startTime = Date.now();
           this.seq = 0;
           this.isClosed = false;
-          log.info(`[ASR] connected, voice_id=${this.voiceId}`);
+          this.wsReady = true;
+          log.info(`[ASR] connected, voice_id=${this.voiceId} pending=${this.pendingFrames.length} frames`);
+          // 把握手期间累积的音频一次性回放出去（按到达顺序）
+          if (this.pendingFrames.length > 0) {
+            const drained = this.pendingFrames.length;
+            const bytes = this.pendingFrames.reduce((s, b) => s + b.length, 0);
+            for (const frame of this.pendingFrames) {
+              try {
+                this.ws!.send(frame, { binary: true });
+              } catch (e) {
+                log.error('[ASR] drain pending frame error', e);
+              }
+            }
+            this.pendingFrames = [];
+            log.info(`[ASR] drained ${drained} pending frames (${bytes} bytes) after WS open`);
+          }
           this.emit('open');
           resolve();
         });
@@ -172,6 +194,18 @@ export class TencentASRClient extends EventEmitter {
   /** 发送音频帧 (16k 16bit mono PCM Buffer) */
   sendAudio(pcm: Buffer) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      // WS 还在握手 → 暂存到 pendingFrames，onopen 时按顺序回放
+      // 超过 MAX_PENDING_BYTES 后丢弃最旧帧（防 OOM）
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        const currentBytes = this.pendingFrames.reduce((s, b) => s + b.length, 0);
+        if (currentBytes + pcm.length > TencentASRClient.MAX_PENDING_BYTES) {
+          // 丢最旧一帧腾位置
+          this.pendingFrames.shift();
+        }
+        this.pendingFrames.push(pcm);
+        return;
+      }
+      // WS 已关闭/异常 → 真正该 skip
       log.warn(`[ASR] skip audio frame: ws not open (readyState=${this.ws?.readyState})`);
       return;
     }
@@ -184,10 +218,30 @@ export class TencentASRClient extends EventEmitter {
 
   /** 结束识别 */
   async stop(): Promise<void> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.isClosed) {
+    if (!this.ws || this.isClosed) {
+      return;
+    }
+    // WS 还在握手 → 等握手完再发 end 标记（onopen 里会回放 pendingFrames）
+    if (this.ws.readyState === WebSocket.CONNECTING) {
+      log.info('[ASR] stop() called during CONNECTING, waiting for onopen to send end');
+      await new Promise<void>((resolve) => {
+        const onOpen = () => {
+          this.ws?.off('open', onOpen);
+          // onopen 已经回放过 pendingFrames；这里只发 end 标记
+          this.sendEndAndClose().finally(resolve);
+        };
+        this.ws!.once('open', onOpen);
+      });
+      return;
+    }
+    if (this.ws.readyState !== WebSocket.OPEN) {
       return;
     }
     this.isClosed = true;
+    return this.sendEndAndClose();
+  }
+
+  private sendEndAndClose(): Promise<void> {
     return new Promise((resolve) => {
       const finish = () => {
         try {
@@ -196,7 +250,6 @@ export class TencentASRClient extends EventEmitter {
         this.ws = null;
         resolve();
       };
-      // 发送结束标记
       try {
         this.ws!.send(
           JSON.stringify({ type: 'end' }),

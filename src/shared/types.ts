@@ -3,6 +3,7 @@
 export type FloatBubbleState =
   | 'idle' // 待命 - 呼吸态
   | 'recording' // 录音中 - 流式识别
+  | 'transcribing' // 本地引擎转写中（录音已停，等待识别结果）
   | 'processing' // AI 优化中
   | 'preview'; // 预览面板展开
 
@@ -34,7 +35,12 @@ export interface HotkeyConfig {
   openSettings: string;
   openHistory: string;
   confirmInject: string;
-  aiOptimize: string;
+  injectPolished: string;
+  aiOptimize1: string;
+  aiOptimize2: string;
+  aiOptimize3: string;
+  aiOptimize4: string;
+  aiOptimize5: string;
 }
 
 export interface InjectOptions {
@@ -47,4 +53,13 @@ export interface HistoryItem {
   polishedText: string | null;
   usedAi: boolean;
   createdAt: number;
+}
+
+/** AI 提示词模板 */
+export interface PromptTemplate {
+  id: string;          // "builtin-standard" | "custom-{timestamp}"
+  name: string;        // 显示名称
+  description: string; // 简短说明
+  prompt: string;      // system prompt 全文
+  isBuiltin: boolean;
 }
