@@ -76,6 +76,40 @@ const DEFAULT_FORM = {
 
 type FormData = typeof DEFAULT_FORM;
 
+/* built-in prompt defaults — used by the reset button */
+const BUILTIN_DEFAULTS: Record<string, { name: string; description: string; prompt: string }> = {
+  'builtin-standard': {
+    name: '标准优化',
+    description: '去除口语词、修正语病、规范化标点符号',
+    prompt: '你是一个文本润色助手。任务：\n1. 去除口语化表达（嗯、那个、就是说、然后、就是、反正、对吧、你知道吗…）\n2. 修正语法错误、错别字\n3. 规范化标点符号（中英文标点统一、增加适当断句）\n4. 保持原意不变，不增删关键信息\n5. 输出简洁清晰的书面中文\n\n直接输出润色后的文本，不要任何解释或前缀。',
+  },
+  'builtin-formal': {
+    name: '正式场景',
+    description: '适合邮件、报告、演讲稿等正式场合',
+    prompt: '你是一位专业文书编辑。请将用户的口述内容改写为正式书面中文：\n1. 使用正式、得体的用语，避免口语和网络流行语\n2. 结构清晰：如有必要，自动分段\n3. 语气得体：尊敬但不卑微，专业但不生硬\n4. 保持原意，但可适度提升表达的精确度和文采\n5. 修正所有错别字和语法错误\n\n直接输出改写后的文本，不要任何解释或前缀。',
+  },
+  'builtin-chat': {
+    name: '聊天场景',
+    description: '适合微信、短信等即时聊天',
+    prompt: '你是一位聊天助手。请将用户的口述内容转化为自然、亲切的聊天消息：\n1. 语气轻松自然，像朋友聊天一样\n2. 适当使用表情符号（如 😊、👍、🤔）增加亲和力\n3. 句子简短，适合在手机上阅读\n4. 可以保留一两个自然的口语词让人感觉真实\n5. 修正错别字但不要过于正式\n\n直接输出改写后的文本，不要任何解释或前缀。',
+  },
+  'builtin-blog': {
+    name: '博文场景',
+    description: '适合博客、公众号、小红书等平台发布',
+    prompt: '你是一位内容创作编辑。请将用户的口述内容改写为适合公开发布的博文：\n1. 增加吸引人的开头，让读者有阅读欲望\n2. 段落短小精悍，每段不超过3-4句话\n3. 适当使用emoji作为视觉分隔符（📌 💡 ✨）\n4. 如有列表项，使用清晰的编号或要点符号\n5. 结尾可加一句互动引导（如"你怎么看？欢迎留言"）\n6. 保持原文事实和信息不变\n\n直接输出改写后的文本，不要任何解释或前缀。',
+  },
+  'builtin-vibecoding': {
+    name: 'vibecoding场景',
+    description: '适合描述编程需求、技术文档',
+    prompt: '你是一位技术文档工程师。请将用户的口述技术需求整理为清晰的技术说明：\n1. 提取核心需求，去除不必要的闲聊\n2. 使用准确的技术术语，不随意替换专业词汇\n3. 如有技术步骤，按顺序编号或分点列出\n4. 代码相关的描述保持原样，不翻译英文术语\n5. 适当补充上下文（如涉及的框架、语言版本），但用 [待确认] 标注不确定的部分\n6. 格式清晰：合理使用标题、列表、代码块标记\n\n直接输出整理后的技术说明，不要任何解释或前缀。',
+  },
+  'builtin-lindaiyu': {
+    name: '林黛玉语气',
+    description: '模仿《红楼梦》林黛玉的口吻风格',
+    prompt: '请将用户的文本改写为林黛玉的说话风格：\n1. 语气娇嗔、略带哀怨，透着一股"我见犹怜"的气质\n2. 常用"罢了"、"偏生"、"谁知"、"可不知"、"真真儿的"等林妹妹标志词\n3. 说话委婉，喜欢用反问和自嘲\n4. 偶尔引用诗词或红楼梦中的典故\n5. 不管说什么都带点"怨"的味道，但又不多到让人讨厌\n6. 整体文白夹杂，偏古典白话\n\n直接输出改写后的文本，不要任何解释或前缀。',
+  },
+};
+
 /* ───────── shared styles ───────── */
 const inputCls = 'w-full px-3 py-2.5 bg-white border border-zinc-200 rounded-lg text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900/10 transition-colors';
 
@@ -122,6 +156,20 @@ export function SettingsPanel() {
     await window.voiceflow.saveConfig(form);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleResetPrompt = (id: string) => {
+    const def = BUILTIN_DEFAULTS[id];
+    if (!def) return;
+    update('llm.prompts', form.llm.prompts.map((p: any) =>
+      p.id === id ? { ...p, name: def.name, description: def.description, prompt: def.prompt } : p));
+    setPromptForm({ name: def.name, description: def.description, prompt: def.prompt });
+  };
+
+  const openPromptEditor = (p: any) => {
+    setEditingPromptId(p.id);
+    setPromptForm({ name: p.name, description: p.description, prompt: p.prompt });
+    setShowPromptForm(true);
   };
 
   useEffect(() => {
@@ -255,10 +303,10 @@ export function SettingsPanel() {
                     const isSelected = selIdx >= 0;
                     return (
                       <div key={p.id}
-                        onClick={() => { if (!p.isBuiltin) { setEditingPromptId(p.id); setPromptForm({ name: p.name, description: p.description, prompt: p.prompt }); setShowPromptForm(true); } }}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
+                        onClick={() => openPromptEditor(p)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${
                           isSelected ? 'border-zinc-900/20 bg-zinc-50' : 'border-zinc-200/60 bg-white hover:border-zinc-300'
-                        } ${p.isBuiltin ? '' : 'cursor-pointer'}`}
+                        }`}
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
@@ -269,10 +317,9 @@ export function SettingsPanel() {
                           <p className="text-[11px] text-zinc-400 truncate mt-0.5">{p.description}</p>
                         </div>
                         <div className="shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                          {!p.isBuiltin && (
-                            <>
-                              <button title="编辑" onClick={() => { setEditingPromptId(p.id); setPromptForm({ name: p.name, description: p.description, prompt: p.prompt }); setShowPromptForm(true); }}
+                            <button title="编辑" onClick={() => openPromptEditor(p)}
                                 className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700"><Icon d={ICONS.edit} size={14} /></button>
+                            {!p.isBuiltin && (
                               <button title="删除" onClick={() => {
                                 if (!confirm(`删除自定义提示词"${p.name}"？`)) return;
                                 const np = form.llm.prompts.filter((x: any) => x.id !== p.id);
@@ -280,8 +327,7 @@ export function SettingsPanel() {
                                 update('llm.prompts', np); update('llm.selectedPromptIds', ns);
                                 if (form.llm.activePromptId === p.id) update('llm.activePromptId', 'builtin-standard');
                               }} className="p-1 rounded hover:bg-red-50 text-zinc-400 hover:text-red-500"><Icon d={ICONS.trash} size={14} /></button>
-                            </>
-                          )}
+                            )}
                           {isSelected ? (
                             <button title="解除绑定" onClick={() => {
                               const ids = [...form.llm.selectedPromptIds]; ids.splice(selIdx, 1); update('llm.selectedPromptIds', ids);
@@ -317,7 +363,15 @@ export function SettingsPanel() {
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm"
                 onClick={() => { setShowPromptForm(false); setEditingPromptId(null); }}>
                 <div className="bg-white rounded-xl shadow-xl border border-zinc-200 p-6 w-[460px] space-y-4" onClick={(e) => e.stopPropagation()}>
-                  <div className="text-[15px] font-semibold text-zinc-900">{editingPromptId ? '编辑提示词' : '新建提示词'}</div>
+                  <div className="text-[15px] font-semibold text-zinc-900 flex items-center justify-between">
+                    <span>{editingPromptId ? '编辑提示词' : '新建提示词'}</span>
+                    {editingPromptId && BUILTIN_DEFAULTS[editingPromptId] && (
+                      <button onClick={() => handleResetPrompt(editingPromptId!)}
+                        className="text-[12px] font-normal text-zinc-400 hover:text-zinc-700 flex items-center gap-1 transition-colors">
+                        <Icon d={ICONS.cancel} size={13} /> 重置为默认
+                      </button>
+                    )}
+                  </div>
                   <input className={inputCls} placeholder="名称" value={promptForm.name} onChange={(e) => setPromptForm((f) => ({ ...f, name: e.target.value }))} />
                   <input className={inputCls} placeholder="简短描述" value={promptForm.description} onChange={(e) => setPromptForm((f) => ({ ...f, description: e.target.value }))} />
                   <textarea className={`${inputCls} min-h-[140px] font-mono text-[12px]`} placeholder="System Prompt 全文..."
