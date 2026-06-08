@@ -1,6 +1,7 @@
 // 主/渲染进程共享类型
 
 export type FloatBubbleState =
+  | 'loading' // 启动中 - 初始化引擎/模型
   | 'idle' // 待命 - 呼吸态
   | 'recording' // 录音中 - 流式识别
   | 'transcribing' // 本地引擎转写中（录音已停，等待识别结果）

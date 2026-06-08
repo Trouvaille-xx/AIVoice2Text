@@ -49,7 +49,7 @@ const hotkey = new HotkeyManager();
 const modelManager = new ModelManager();
 
 // 当前浮窗状态（用于动态快捷键管理）
-let currentFloatState = 'idle';
+let currentFloatState = 'loading';
 
 // 追踪用户最后使用的非浮窗前台窗口（用于点击浮窗启动录音时找回目标）
 let lastUserForegroundHwnd: number | null = null;
@@ -162,7 +162,7 @@ function createFloatWindow() {
       ? BUILTIN_MODELS.find((m) => m.id === asrCfgInit.localModelId)
       : null;
     sendToFloat('state:change', {
-      state: 'idle',
+      state: 'loading',
       provider: asrCfgInit.provider || 'tencent',
       label: asrCfgInit.provider === 'local' && modelInfoInit
         ? modelInfoInit.displayName
@@ -333,6 +333,10 @@ function createTray() {
 // ============================================================
 async function startRecording(useAI: boolean) {
   if (isRecording) return;
+  if (currentFloatState === 'loading') {
+    log.info('[recording] app still loading, ignoring start request');
+    return;
+  }
   // 关键：递增会话计数器，旧的 listener 立刻被识别为 stale
   currentSession++;
   // 若上一个转写（LocalASRClient 处于 stop 等待 whisper 退出）还在跑，先杀掉
@@ -763,7 +767,7 @@ function setFloatState(state: string) {
     forceResizeWindow(800, 240);
   } else if (state === 'transcribing' || state === 'recording') {
     forceResizeWindow(520, 140);
-  } else if (state === 'idle') {
+  } else if (state === 'idle' || state === 'loading') {
     forceResizeWindow(520, 140);
   }
 
@@ -1271,8 +1275,12 @@ app.whenReady().then(async () => {
   }
   log.info(`Hotkey ok: ${ok.join(', ')}`);
 
-  // 启动时注册 Esc（idle 态也需要关闭浮窗）
-  updateDynamicShortcuts('idle');
+  // 启动时注册 Esc（loading 态也需要关闭浮窗）
+  updateDynamicShortcuts('loading');
+
+  // 初始化完成，切到 idle
+  log.info('[startup] app fully initialized, switching to idle');
+  setFloatState('idle');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
