@@ -17,10 +17,12 @@ import log from 'electron-log/main';
 import { HotkeyManager } from './hotkey';
 import { ConfigStore } from './config/store';
 import { TencentASRClient } from './asr/tencent-client';
+import { LocalASRClient } from './asr/local-client';
 import { EnergyVAD } from './asr/vad';
 import { LLMClient } from './llm/client';
 import { injectText, captureTargetWindow, getForegroundHwnd, setFallbackTargetHwnd } from './injector/injector';
 import { HistoryDB } from './history/db';
+import { ModelManager, BUILTIN_MODELS } from './models/manager';
 import type { InjectOptions } from '@shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +46,7 @@ let tray: Tray | null = null;
 const config = new ConfigStore();
 const history = new HistoryDB();
 const hotkey = new HotkeyManager();
+const modelManager = new ModelManager();
 
 // 当前浮窗状态（用于动态快捷键管理）
 let currentFloatState = 'idle';
@@ -52,7 +55,7 @@ let currentFloatState = 'idle';
 let lastUserForegroundHwnd: number | null = null;
 
 // 当前录音状态
-let asrClient: TencentASRClient | null = null;
+let asrClient: TencentASRClient | LocalASRClient | null = null;
 let isRecording = false;
 // 会话计数器：每次 startRecording 自增。listener 用闭包捕获 thisSession，
 // 回调里比对 currentSession，避免"force-kill 旧 client"或"新 session 开始"后
@@ -321,8 +324,6 @@ async function startRecording(useAI: boolean) {
   // 关键：递增会话计数器，旧的 listener 立刻被识别为 stale
   currentSession++;
   // 若上一个转写（LocalASRClient 处于 stop 等待 whisper 退出）还在跑，先杀掉
-  // 当前只用腾讯云 ASR，stop() 会自然完成，这里无需特别处理
-  // 保留 forceKill hook 以防未来再加回本地引擎
   if (asrClient && typeof (asrClient as any).forceKill === 'function') {
     log.info('[recording] killing previous transcription in progress');
     (asrClient as any).forceKill();
@@ -330,6 +331,101 @@ async function startRecording(useAI: boolean) {
     asrClient = null;
   }
   log.info(`[recording] start requested, useAI=${useAI}`);
+
+  // ────────────── 选择 provider ──────────────
+  const asrCfg = config.get('asr');
+  const provider = asrCfg?.provider || 'tencent';
+
+  // 录音前记录目标窗口（点击浮窗会抢焦点，传 hwnd 以便回退到用户窗口）
+  let floatHwnd: number | undefined;
+  try {
+    const buf = floatWin?.getNativeWindowHandle();
+    if (buf) floatHwnd = buf.readInt32LE(0);
+  } catch {}
+  captureTargetWindow(floatHwnd);
+
+  // 浮窗 show
+  if (floatWin) {
+    const { x, y } = getFloatPosition();
+    const h = Math.min(140, screen.getPrimaryDisplay().workAreaSize.height - 48);
+    const wasVisible = floatWin.isVisible();
+    const [oldX, oldY] = floatWin.getPosition();
+    const [oldW, oldH] = floatWin.getSize();
+    log.info(`[recording] show float: was visible=${wasVisible} old=(${oldX},${oldY}) ${oldW}x${oldH} → target=(${x},${y}) 520x${h}`);
+    floatWin.setBounds({ x, y, width: 520, height: h });
+    if (!wasVisible) floatWin.showInactive();
+  }
+
+  // ════════════════════════════════════════════
+  // 本地 ASR 分支
+  // ════════════════════════════════════════════
+  if (provider === 'local') {
+    if (!asrCfg.localModelId) {
+      log.warn('[recording] local provider but no model selected');
+      sendToFloat('asr:error', { code: 'NO_MODEL', message: '请先在设置中下载并选择一个本地模型' });
+      openSettings();
+      return;
+    }
+    const modelPath = modelManager.getModelPath(asrCfg.localModelId);
+    if (!modelPath) {
+      log.warn(`[recording] local model not on disk: ${asrCfg.localModelId}`);
+      sendToFloat('asr:error', { code: 'MODEL_MISSING', message: `模型未下载: ${asrCfg.localModelId}` });
+      openSettings();
+      return;
+    }
+
+    isRecording = true;
+    currentUseAI = useAI;
+    currentFinalText = '';
+    currentPolishedText = '';
+    currentPartialText = '';
+    polishedCache = {};
+
+    setFloatState('recording');
+    const modelInfo = BUILTIN_MODELS.find((m) => m.id === asrCfg.localModelId);
+    currentAsrProvider = 'local';
+    currentAsrLabel = modelInfo ? modelInfo.displayName : `🤖 ${asrCfg.localModelId}`;
+    log.info(`[recording] asrProvider=local model=${asrCfg.localModelId} label=${currentAsrLabel}`);
+
+    try {
+      asrClient = new LocalASRClient({
+        modelPath,
+        language: asrCfg.language,
+        threads: asrCfg.threads,
+      });
+      const thisSession = currentSession;
+      asrClient.on('final', (r) => {
+        if (currentSession !== thisSession) {
+          log.info(`[recording] ignoring stale LOCAL final: "${r.text?.slice(0, 30)}"`);
+          return;
+        }
+        log.info(`[recording] LOCAL FINAL: "${r.text}"`);
+        currentFinalText = r.text;
+        sendToFloat('asr:final', r);
+        onRecordingDone();
+      });
+      asrClient.on('error', (e) => {
+        if (currentSession !== thisSession) {
+          log.info(`[recording] ignoring stale LOCAL error`);
+          return;
+        }
+        log.error('[recording] LOCAL ASR error', e);
+        sendToFloat('asr:error', e);
+      });
+      await asrClient.start();
+      log.info('[recording] LocalASR ready, waiting for audio');
+    } catch (e: any) {
+      log.error('[recording] LocalASR start failed', e);
+      sendToFloat('asr:error', { code: 'START_FAILED', message: e.message || '启动识别失败' });
+      isRecording = false;
+      setFloatState('idle');
+    }
+    return;
+  }
+
+  // ════════════════════════════════════════════
+  // 腾讯云 ASR 分支（原逻辑）
+  // ════════════════════════════════════════════
   const asr = config.get('tencentASR');
 
   log.info(
@@ -354,28 +450,6 @@ async function startRecording(useAI: boolean) {
   currentPolishedText = '';
   currentPartialText = '';
   polishedCache = {};
-
-  // 录音开始前先记录目标窗口（点击浮窗时浮窗会抢焦点，传 hwnd 以便回退到用户窗口）
-  let floatHwnd: number | undefined;
-  try {
-    const buf = floatWin?.getNativeWindowHandle();
-    if (buf) floatHwnd = buf.readInt32LE(0);
-  } catch {}
-  captureTargetWindow(floatHwnd);
-
-  // 显示浮窗（不抢焦点，先重置大小再定位）
-  if (floatWin) {
-    const { x, y } = getFloatPosition();
-    const h = Math.min(140, screen.getPrimaryDisplay().workAreaSize.height - 48);
-    const wasVisible = floatWin.isVisible();
-    const [oldX, oldY] = floatWin.getPosition();
-    const [oldW, oldH] = floatWin.getSize();
-    log.info(`[recording] show float: was visible=${wasVisible} old=(${oldX},${oldY}) ${oldW}x${oldH} → target=(${x},${y}) 520x${h}`);
-    // setBounds 一次性原子地设置位置+大小，避免 show 出现在旧位置再跳到新位置的闪现
-    floatWin.setBounds({ x, y, width: 520, height: h });
-    if (!wasVisible) floatWin.showInactive();
-    // 不调用 focus()，让目标窗口保持焦点
-  }
 
   setFloatState('recording');
   // 记录当前会话的 ASR provider 和引擎标签（用于浮窗显示）
@@ -463,13 +537,15 @@ async function stopRecording() {
   if (asrClient === thisAsrClient) asrClient = null;
 
   // 兜底：若 'final' 事件丢失（理论上不会发生），状态会卡在 transcribing
-  // 等 30s 超时，强切到 idle，避免永久卡住
+  // 本地模式: 3 分钟兜底（whisper-cli 跑得久，medium 模型 60s 录音可能要 30s 转写）
+  // 云端模式: 30s 兜底
+  const timeout = currentAsrProvider === 'local' ? 180_000 : 30_000;
   setTimeout(() => {
     if (currentFloatState === 'transcribing' && asrClient === null) {
-      log.warn('[recording] transcribing timeout (30s) — forcing idle');
+      log.warn(`[recording] transcribing timeout (${timeout / 1000}s) — forcing idle`);
       setFloatState('idle');
     }
-  }, 30000);
+  }, timeout);
 }
 
 /** transcribing 状态最短 hold 时长（让用户能看到"识别中"闪过） */
@@ -962,6 +1038,34 @@ ipcMain.handle('history:inject', async (_e, id: number) => {
   });
 });
 
+// ============================================================
+// 本地 ASR 模型管理
+// ============================================================
+ipcMain.handle('model:list', async () => {
+  const all = BUILTIN_MODELS;
+  const downloadedSet = new Set(
+    (await modelManager.listDownloaded()).map((m) => m.id),
+  );
+  return all.map((m) => ({ ...m, downloaded: downloadedSet.has(m.id) }));
+});
+
+ipcMain.handle('model:download', async (_e, modelId: string) => {
+  try {
+    await modelManager.download(modelId, (p) => sendToFloat('model:progress', p));
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+
+ipcMain.on('model:cancel', (_e, modelId: string) => {
+  modelManager.cancel(modelId);
+});
+
+ipcMain.handle('model:delete', async (_e, modelId: string) => {
+  return await modelManager.delete(modelId);
+});
+
 // 打开设置窗口
 ipcMain.on('open:settings', () => openSettings());
 ipcMain.on('open:history', () => createHistoryWindow());
@@ -1107,6 +1211,9 @@ app.whenReady().then(async () => {
   log.info('[startup] app ready, loading config...');
   await config.load();
   log.info(`[startup] config loaded, hotkeys: ${JSON.stringify(config.get('hotkeys'))}`);
+
+  // 初始化模型目录(%APPDATA%/voiceflow/models/)
+  await modelManager.init();
 
   // 同步开机自启设置
   app.setLoginItemSettings({

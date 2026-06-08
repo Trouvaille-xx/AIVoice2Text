@@ -5,6 +5,7 @@ dist-electron
 build/
 .DS_Store
 *.log
+*.tsbuildinfo
 .env
 .env.local
 *.ps1

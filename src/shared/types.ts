@@ -63,3 +63,38 @@ export interface PromptTemplate {
   prompt: string;      // system prompt 全文
   isBuiltin: boolean;
 }
+
+// ============================================================
+// 本地 ASR 模型管理
+// ============================================================
+
+/** ASR 提供方:'tencent' = 腾讯云 WebSocket,'local' = 本地 whisper.cpp */
+export type ASRProvider = 'tencent' | 'local';
+
+/** 内置默认本地模型清单(由代码常量维护,不需要远端拉) */
+export interface LocalModelInfo {
+  id: string;                    // 'tiny' | 'base' | 'small' | 'medium'
+  name: string;                  // 'Tiny' / 'Base' / 'Small' / 'Medium'
+  displayName: string;           // 浮窗用:'🤖 Whisper Tiny'
+  filename: string;              // 'ggml-tiny.bin'
+  sizeBytes: number;             // 预期大小(用于进度计算 + 兜底)
+  url: string;                   // HF mirror 完整下载 URL
+  description: string;           // 一句话说明,设置页显示
+}
+
+export type ModelDownloadState =
+  | 'idle'
+  | 'downloading'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/** 推送到 renderer 的下载进度事件载荷 */
+export interface ModelDownloadProgress {
+  modelId: string;
+  state: ModelDownloadState;
+  bytesDownloaded: number;
+  totalBytes: number;
+  error?: string;
+}

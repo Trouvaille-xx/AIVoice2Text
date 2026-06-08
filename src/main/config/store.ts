@@ -7,7 +7,7 @@ import { app, safeStorage } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import log from 'electron-log/main';
-import type { HotkeyConfig, InjectOptions, PromptTemplate } from '@shared/types';
+import type { ASRProvider, HotkeyConfig, InjectOptions, PromptTemplate } from '@shared/types';
 
 export interface AppConfig {
   // 腾讯 ASR
@@ -16,6 +16,13 @@ export interface AppConfig {
     secretId: string;
     secretKey: string;
     engineType: '16k_zh' | '16k_zh-PY' | '16k_en';
+  };
+  // ASR 提供方 + 本地模型配置
+  asr: {
+    provider: ASRProvider;             // 'tencent' | 'local'
+    localModelId: string;              // 'tiny' | 'base' | 'small' | 'medium',空=未选
+    language: 'zh' | 'en' | 'auto';
+    threads: number;                   // whisper 线程数
   };
   // LLM
   llm: {
@@ -54,6 +61,12 @@ const DEFAULTS: AppConfig = {
     secretId: '',
     secretKey: '',
     engineType: '16k_zh-PY',
+  },
+  asr: {
+    provider: 'tencent',   // 兼容老用户,默认仍走云端
+    localModelId: '',      // 空=未选(设置页下载后会自动选)
+    language: 'zh',
+    threads: 4,
   },
   llm: {
     baseURL: 'https://api.openai.com/v1',
@@ -179,6 +192,13 @@ export class ConfigStore {
       }
       if (!this.data.llm.selectedPromptIds || this.data.llm.selectedPromptIds.length === 0) {
         this.data.llm.selectedPromptIds = ['builtin-standard'];
+      }
+      // 迁移: 老 config 没 asr 段,补默认(深度合并,保 user 已设的字段)
+      if (!this.data.asr) {
+        this.data.asr = deepClone(DEFAULTS.asr);
+        log.info('Config migrated: asr section added with defaults');
+      } else {
+        this.data.asr = { ...deepClone(DEFAULTS.asr), ...this.data.asr };
       }
     } catch (e) {
       // 不存在则用默认

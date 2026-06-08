@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import type { ModelDownloadProgress } from '@shared/types';
 
 declare global {
   interface Window {
     voiceflow: {
       getConfig: () => Promise<any>;
       saveConfig: (c: any) => Promise<boolean>;
+      listModels: () => Promise<Array<any>>;
+      downloadModel: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      cancelDownload: (id: string) => void;
+      deleteModel: (id: string) => Promise<boolean>;
+      on: (channel: string, handler: (payload: any) => void) => () => void;
+      openExternal: (url: string) => void;
       [k: string]: any;
     };
   }
@@ -16,6 +23,12 @@ const DEFAULT_FORM = {
     secretId: '',
     secretKey: '',
     engineType: '16k_zh-PY' as const,
+  },
+  asr: {
+    provider: 'tencent' as 'tencent' | 'local',
+    localModelId: '',
+    language: 'zh' as 'zh' | 'en' | 'auto',
+    threads: 4,
   },
   llm: {
     baseURL: 'https://api.openai.com/v1',
@@ -193,84 +206,115 @@ export function SettingsPanel() {
                 title={
                   <div className="flex items-center gap-2 flex-wrap">
                     <span>语音识别</span>
-                    <span className="text-[10px] px-2 py-0.5 bg-primary-400 text-white rounded font-semibold">腾讯云</span>
+                    <span className="text-[10px] px-2 py-0.5 bg-primary-400 text-white rounded font-semibold">
+                      {form.asr.provider === 'local' ? '本地' : '腾讯云'}
+                    </span>
                   </div>
                 }
-                desc="配置腾讯云 ASR 在线识别（每月赠送数小时免费额度）"
+                desc={
+                  form.asr.provider === 'local'
+                    ? '本地 whisper.cpp 模型识别,完全离线,无隐私顾虑'
+                    : '配置腾讯云 ASR 在线识别（每月赠送数小时免费额度）'
+                }
               >
-                {/* 获取免费额度链接 */}
-                <div className="flex items-center justify-between px-3 py-2.5 bg-gradient-to-r from-primary-50 to-accent-50 rounded-lg border border-primary-200/50">
-                  <div>
-                    <div className="text-sm font-semibold text-ink-900">🎁 腾讯云 ASR 新用户免费额度</div>
-                    <div className="text-[11px] text-ink-500 mt-0.5">每月赠送数小时免费转写额度，足够日常使用</div>
+                {/* Provider tabs */}
+                <Field label="识别引擎">
+                  <div className="flex bg-white/60 rounded-lg p-0.5 w-fit">
+                    {(['tencent', 'local'] as const).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => update('asr.provider', p)}
+                        className={`px-4 py-1.5 text-sm rounded-md transition ${
+                          form.asr.provider === p
+                            ? 'bg-primary-400 text-white'
+                            : 'text-ink-700 hover:bg-white/60'
+                        }`}
+                      >
+                        {p === 'tencent' ? '☁️ 腾讯云' : '🤖 本地模型'}
+                      </button>
+                    ))}
                   </div>
-                  <button
-                    onClick={() => window.voiceflow.openExternal('https://cloud.tencent.com/product/asr')}
-                    className="text-xs px-3 py-1.5 bg-white text-primary-600 border border-primary-300 rounded-md hover:bg-primary-50 transition font-semibold shrink-0"
-                  >
-                    前往领取 →
-                  </button>
-                </div>
-
-                <Field label="AppId">
-                  <input className={inputCls} value={form.tencentASR.appId}
-                    onChange={(e) => update('tencentASR.appId', e.target.value)} placeholder="1400000000" />
-                </Field>
-                <Field label="SecretId">
-                  <input className={inputCls} value={form.tencentASR.secretId}
-                    onChange={(e) => update('tencentASR.secretId', e.target.value)} placeholder="AKID..." />
-                </Field>
-                <Field label="SecretKey">
-                  <input type="password" className={inputCls} value={form.tencentASR.secretKey}
-                    onChange={(e) => update('tencentASR.secretKey', e.target.value)} placeholder="••••••••" />
-                </Field>
-                <Field label="引擎类型">
-                  <select className={inputCls} value={form.tencentASR.engineType}
-                    onChange={(e) => update('tencentASR.engineType', e.target.value as any)}>
-                    <option value="16k_zh">中文 (16k_zh)</option>
-                    <option value="16k_zh-PY">中英混合 (16k_zh-PY) ⭐</option>
-                    <option value="16k_en">英文 (16k_en)</option>
-                  </select>
                 </Field>
 
-                {/* 1/2/3 教程：教用户怎么获取凭证 */}
-                <div className="mt-2 px-4 py-4 bg-white/40 border border-white/60 rounded-xl space-y-3">
-                  <div className="text-sm font-semibold text-ink-900">📖 如何获取腾讯云 ASR 凭证？</div>
-                  <ol className="space-y-2.5 text-[12px] text-ink-700">
-                    <li className="flex gap-2.5">
-                      <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">1</span>
-                      <div className="flex-1">
-                        <div className="font-semibold text-ink-900">注册腾讯云账号并实名认证</div>
-                        <button onClick={() => window.voiceflow.openExternal('https://cloud.tencent.com/register')}
-                          className="text-primary-500 hover:underline text-[11px] mt-0.5">
-                          打开注册页 →
-                        </button>
+                {form.asr.provider === 'tencent' ? (
+                  <>
+                    {/* 获取免费额度链接 */}
+                    <div className="flex items-center justify-between px-3 py-2.5 bg-gradient-to-r from-primary-50 to-accent-50 rounded-lg border border-primary-200/50">
+                      <div>
+                        <div className="text-sm font-semibold text-ink-900">🎁 腾讯云 ASR 新用户免费额度</div>
+                        <div className="text-[11px] text-ink-500 mt-0.5">每月赠送数小时免费转写额度,足够日常使用</div>
                       </div>
-                    </li>
-                    <li className="flex gap-2.5">
-                      <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">2</span>
-                      <div className="flex-1">
-                        <div className="font-semibold text-ink-900">开通「语音识别 ASR」服务</div>
-                        <div className="text-[11px] text-ink-500 mt-0.5">首次开通每月赠送数小时免费额度（够日常用）</div>
-                        <button onClick={() => window.voiceflow.openExternal('https://console.cloud.tencent.com/asr')}
-                          className="text-primary-500 hover:underline text-[11px] mt-0.5">
-                          打开控制台 →
-                        </button>
-                      </div>
-                    </li>
-                    <li className="flex gap-2.5">
-                      <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">3</span>
-                      <div className="flex-1">
-                        <div className="font-semibold text-ink-900">创建应用获取密钥</div>
-                        <div className="text-[11px] text-ink-500 mt-0.5">控制台 → 语音识别 → <b>应用管理</b> → 新建应用 → 复制 <code className="px-1 py-0.5 bg-ink-100 rounded">AppId</code> / <code className="px-1 py-0.5 bg-ink-100 rounded">SecretId</code> / <code className="px-1 py-0.5 bg-ink-100 rounded">SecretKey</code> 填到上面表单</div>
-                        <button onClick={() => window.voiceflow.openExternal('https://console.cloud.tencent.com/asr/app')}
-                          className="text-primary-500 hover:underline text-[11px] mt-0.5">
-                          直接打开应用管理 →
-                        </button>
-                      </div>
-                    </li>
-                  </ol>
-                </div>
+                      <button
+                        onClick={() => window.voiceflow.openExternal('https://cloud.tencent.com/product/asr')}
+                        className="text-xs px-3 py-1.5 bg-white text-primary-600 border border-primary-300 rounded-md hover:bg-primary-50 transition font-semibold shrink-0"
+                      >
+                        前往领取 →
+                      </button>
+                    </div>
+
+                    <Field label="AppId">
+                      <input className={inputCls} value={form.tencentASR.appId}
+                        onChange={(e) => update('tencentASR.appId', e.target.value)} placeholder="1400000000" />
+                    </Field>
+                    <Field label="SecretId">
+                      <input className={inputCls} value={form.tencentASR.secretId}
+                        onChange={(e) => update('tencentASR.secretId', e.target.value)} placeholder="AKID..." />
+                    </Field>
+                    <Field label="SecretKey">
+                      <input type="password" className={inputCls} value={form.tencentASR.secretKey}
+                        onChange={(e) => update('tencentASR.secretKey', e.target.value)} placeholder="••••••••" />
+                    </Field>
+                    <Field label="引擎类型">
+                      <select className={inputCls} value={form.tencentASR.engineType}
+                        onChange={(e) => update('tencentASR.engineType', e.target.value as any)}>
+                        <option value="16k_zh">中文 (16k_zh)</option>
+                        <option value="16k_zh-PY">中英混合 (16k_zh-PY) ⭐</option>
+                        <option value="16k_en">英文 (16k_en)</option>
+                      </select>
+                    </Field>
+
+                    {/* 1/2/3 教程:教用户怎么获取凭证 */}
+                    <div className="mt-2 px-4 py-4 bg-white/40 border border-white/60 rounded-xl space-y-3">
+                      <div className="text-sm font-semibold text-ink-900">📖 如何获取腾讯云 ASR 凭证?</div>
+                      <ol className="space-y-2.5 text-[12px] text-ink-700">
+                        <li className="flex gap-2.5">
+                          <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">1</span>
+                          <div className="flex-1">
+                            <div className="font-semibold text-ink-900">注册腾讯云账号并实名认证</div>
+                            <button onClick={() => window.voiceflow.openExternal('https://cloud.tencent.com/register')}
+                              className="text-primary-500 hover:underline text-[11px] mt-0.5">
+                              打开注册页 →
+                            </button>
+                          </div>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">2</span>
+                          <div className="flex-1">
+                            <div className="font-semibold text-ink-900">开通「语音识别 ASR」服务</div>
+                            <div className="text-[11px] text-ink-500 mt-0.5">首次开通每月赠送数小时免费额度(够日常用)</div>
+                            <button onClick={() => window.voiceflow.openExternal('https://console.cloud.tencent.com/asr')}
+                              className="text-primary-500 hover:underline text-[11px] mt-0.5">
+                              打开控制台 →
+                            </button>
+                          </div>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 text-white text-[10px] font-bold flex items-center justify-center">3</span>
+                          <div className="flex-1">
+                            <div className="font-semibold text-ink-900">创建应用获取密钥</div>
+                            <div className="text-[11px] text-ink-500 mt-0.5">控制台 → 语音识别 → <b>应用管理</b> → 新建应用 → 复制 <code className="px-1 py-0.5 bg-ink-100 rounded">AppId</code> / <code className="px-1 py-0.5 bg-ink-100 rounded">SecretId</code> / <code className="px-1 py-0.5 bg-ink-100 rounded">SecretKey</code> 填到上面表单</div>
+                            <button onClick={() => window.voiceflow.openExternal('https://console.cloud.tencent.com/asr/app')}
+                              className="text-primary-500 hover:underline text-[11px] mt-0.5">
+                              直接打开应用管理 →
+                            </button>
+                          </div>
+                        </li>
+                      </ol>
+                    </div>
+                  </>
+                ) : (
+                  <LocalModelSection form={form} update={update} />
+                )}
               </Section>
             )}
 
@@ -658,5 +702,198 @@ function Tip({ children }: { children: React.ReactNode }) {
     <div className="text-xs text-ink-500 px-3 py-2 bg-primary-50/40 rounded-lg">
       {children}
     </div>
+  );
+}
+
+// ============================================================================
+// 本地模型子表单(ASR Provider = 'local' 时显示)
+// ============================================================================
+function LocalModelSection({
+  form,
+  update,
+}: {
+  form: FormData;
+  update: (path: string, value: any) => void;
+}) {
+  const [models, setModels] = useState<
+    Array<{
+      id: string;
+      name: string;
+      description: string;
+      sizeBytes: number;
+      downloaded: boolean;
+    }>
+  >([]);
+  const [progress, setProgress] = useState<Record<string, ModelDownloadProgress>>({});
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const list = await window.voiceflow.listModels();
+      setModels(list);
+    } catch (e) {
+      console.error('listModels failed', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // 订阅下载进度
+  useEffect(() => {
+    return window.voiceflow.on('model:progress', (p: ModelDownloadProgress) => {
+      setProgress((prev) => ({ ...prev, [p.modelId]: p }));
+      if (p.state === 'completed' || p.state === 'failed' || p.state === 'cancelled') {
+        setDownloading(null);
+        // 完成后刷新列表拿到最新 downloaded 状态
+        refresh();
+      }
+    });
+  }, [refresh]);
+
+  // 自动选中第一个已下载模型
+  useEffect(() => {
+    const downloaded = models.filter((m) => m.downloaded);
+    if (downloaded.length > 0 && !downloaded.find((m) => m.id === form.asr.localModelId)) {
+      update('asr.localModelId', downloaded[0].id);
+    }
+  }, [models, form.asr.localModelId, update]);
+
+  const download = async (id: string) => {
+    setDownloading(id);
+    try {
+      await window.voiceflow.downloadModel(id);
+    } catch (e) {
+      console.error('download failed', e);
+    }
+  };
+  const cancel = (id: string) => window.voiceflow.cancelDownload(id);
+  const del = async (id: string) => {
+    if (!confirm(`删除模型 ${id}?\n删除后可重新下载`)) return;
+    await window.voiceflow.deleteModel(id);
+    refresh();
+  };
+
+  return (
+    <>
+      <Tip>本地识别完全离线,不消耗流量,无隐私顾虑。模型越大越准但越慢。</Tip>
+
+      <div className="space-y-2">
+        {models.map((m) => {
+          const prog = progress[m.id];
+          const pct =
+            prog && prog.totalBytes > 0
+              ? Math.floor((prog.bytesDownloaded / prog.totalBytes) * 100)
+              : 0;
+          const isDownloading = downloading === m.id && prog?.state === 'downloading';
+          const isSelected = form.asr.localModelId === m.id && m.downloaded;
+          return (
+            <div
+              key={m.id}
+              className={`p-3 rounded-lg border transition ${
+                isSelected
+                  ? 'border-primary-400 bg-primary-50/60'
+                  : 'border-white/60 bg-white/40'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  type="radio"
+                  name="localModel"
+                  checked={isSelected}
+                  disabled={!m.downloaded}
+                  onChange={() => update('asr.localModelId', m.id)}
+                  className="w-4 h-4"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-ink-900">{m.name}</div>
+                  <div className="text-[11px] text-ink-500 truncate">
+                    {m.description} · {(m.sizeBytes / 1e6).toFixed(0)} MB
+                  </div>
+                </div>
+                {m.downloaded ? (
+                  <>
+                    <span className="text-[10px] text-success-500 font-semibold shrink-0">
+                      ✓ 已下载
+                    </span>
+                    <button
+                      onClick={() => del(m.id)}
+                      className="text-xs text-red-500 hover:underline shrink-0"
+                    >
+                      删除
+                    </button>
+                  </>
+                ) : isDownloading ? (
+                  <>
+                    <span className="text-[10px] text-primary-500 font-mono shrink-0">
+                      {pct}%
+                    </span>
+                    <button
+                      onClick={() => cancel(m.id)}
+                      className="text-xs text-ink-500 hover:underline shrink-0"
+                    >
+                      取消
+                    </button>
+                  </>
+                ) : prog?.state === 'failed' ? (
+                  <button
+                    onClick={() => download(m.id)}
+                    className="text-xs px-3 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200 shrink-0"
+                  >
+                    重试
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => download(m.id)}
+                    className="text-xs px-3 py-1 bg-primary-400 text-white rounded hover:opacity-90 shrink-0"
+                  >
+                    下载
+                  </button>
+                )}
+              </div>
+              {/* 进度条 */}
+              {isDownloading && (
+                <div className="mt-2 h-1.5 bg-white/60 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary-400 transition-all duration-200"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              )}
+              {prog?.state === 'failed' && prog.error && (
+                <div className="mt-1.5 text-[10px] text-red-500 truncate">
+                  ✗ {prog.error}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 语言 + 线程数 */}
+      <Field label="识别语言">
+        <select
+          className={inputCls}
+          value={form.asr.language}
+          onChange={(e) => update('asr.language', e.target.value as any)}
+        >
+          <option value="zh">中文</option>
+          <option value="en">英文</option>
+          <option value="auto">自动检测</option>
+        </select>
+      </Field>
+      <Field label="线程数">
+        <input
+          type="number"
+          min={1}
+          max={16}
+          className={inputCls}
+          value={form.asr.threads}
+          onChange={(e) => update('asr.threads', parseInt(e.target.value) || 4)}
+        />
+      </Field>
+      <Tip>线程数建议 = CPU 物理核心数;模型越大越吃 CPU</Tip>
+    </>
   );
 }
