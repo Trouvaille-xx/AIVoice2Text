@@ -156,18 +156,12 @@ function createFloatWindow() {
     log.info('[window] float ready-to-show');
     floatWin?.show();
     log.info(`[window] float shown, visible=${floatWin?.isVisible()}`);
-    // 推送初始 idle 状态（让浮窗知道当前引擎）
-    const asrCfgInit = config.get('asr');
-    const modelInfoInit = asrCfgInit.provider === 'local' && asrCfgInit.localModelId
-      ? BUILTIN_MODELS.find((m) => m.id === asrCfgInit.localModelId)
-      : null;
-    sendToFloat('state:change', {
-      state: 'loading',
-      provider: asrCfgInit.provider || 'tencent',
-      label: asrCfgInit.provider === 'local' && modelInfoInit
-        ? modelInfoInit.displayName
-        : '',
-    });
+    // 先推 loading 让 React 渲染启动画面，500ms 后切 idle
+    sendToFloat('state:change', { state: 'loading', provider: 'tencent', label: '' });
+    setTimeout(() => {
+      log.info('[startup] app fully initialized, switching to idle');
+      setFloatState('idle');
+    }, 500);
   });
 
   floatWin.on('close', (e) => {
@@ -1274,13 +1268,6 @@ app.whenReady().then(async () => {
     log.warn(`Hotkey failed: ${failed.join(', ')}`);
   }
   log.info(`Hotkey ok: ${ok.join(', ')}`);
-
-  // 启动时注册 Esc（loading 态也需要关闭浮窗）
-  updateDynamicShortcuts('loading');
-
-  // 初始化完成，切到 idle
-  log.info('[startup] app fully initialized, switching to idle');
-  setFloatState('idle');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
