@@ -5,7 +5,14 @@ dist-electron
 build/
 .DS_Store
 *.log
+*.tsbuildinfo
 .env
 .env.local
 *.ps1
 .claude/
+# CUDA GPU 加速 DLL（体积大，不提交，构建时从 whisper.cpp release 下载替换）
+bin/cublas*.dll
+bin/cudart*.dll
+bin/ggml-cuda.dll
+bin/nvblas*.dll
+bin/nvrtc*.dll

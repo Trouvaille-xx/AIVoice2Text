@@ -31,7 +31,7 @@ export interface VADConfig {
   /** 连续多少帧低于阈值才认为说话结束（保留自然停顿） */
   minSilenceFrames: number;  // 15 (~600ms)
   /** 语音段前后各保留多少 ms 静音 padding，避免截断首尾辅音 */
-  paddingMs: number;         // 300
+  paddingMs: number;         // 500
 }
 
 export const DEFAULT_VAD_CONFIG: VADConfig = {
@@ -42,7 +42,7 @@ export const DEFAULT_VAD_CONFIG: VADConfig = {
   minZcr: 0.04,
   minSpeechFrames: 3,
   minSilenceFrames: 15,
-  paddingMs: 300,
+  paddingMs: 500,
 };
 
 export interface VADSummary {

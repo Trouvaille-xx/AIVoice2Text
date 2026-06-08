@@ -20,7 +20,7 @@ function accelToDisplay(s: string): string {
     .replace(/\+/g, '+');
 }
 
-type BubbleState = 'idle' | 'recording' | 'transcribing' | 'processing' | 'preview';
+type BubbleState = 'loading' | 'idle' | 'recording' | 'transcribing' | 'processing' | 'preview';
 
 /**
  * 判断 KeyboardEvent 是否匹配 Electron accelerator 字符串
@@ -64,7 +64,16 @@ export function FloatBubble() {
   const [error, setError] = useState('');        // 错误消息
   const [injectResult, setInjectResult] = useState<any>(null);
   const [hotkey, setHotkey] = useState('Ctrl+Alt+Z');
-  const [hotkeyConfig, setHotkeyConfig] = useState<any>(null);
+  const [hotkeyConfig, setHotkeyConfig] = useState<any>({
+    confirmInject: 'Shift+!',
+    injectPolished: 'Shift+@',
+    cancel: 'Escape',
+    aiOptimize1: 'Alt+1',
+    aiOptimize2: 'Alt+2',
+    aiOptimize3: 'Alt+3',
+    aiOptimize4: 'Alt+4',
+    aiOptimize5: 'Alt+5',
+  });
   const [label, setLabel] = useState('');
   const [seconds, setSeconds] = useState(0);
 
@@ -111,7 +120,7 @@ export function FloatBubble() {
         setState(v);
         if (typeof payload === 'object' && payload.label) setLabel(payload.label);
         if (v === 'idle') {
-          setText(''); setPolished(''); setError(''); setInjectResult(null); setPartial('');
+          setText(''); setPolished(''); setError(''); setInjectResult(null); setPartial(''); setLabel('');
         }
         if (v === 'recording') {
           setText(''); setPolished(''); setError(''); setInjectResult(null); setPartial('');
@@ -161,6 +170,14 @@ export function FloatBubble() {
         if (c?.hotkeys) {
           setHotkeyConfig(c.hotkeys);
           if (c.hotkeys.pushToTalk) setHotkey(accelToDisplay(c.hotkeys.pushToTalk));
+        }
+        // 引擎切换后更新 idle 态浮窗标签
+        if (c?.asr) {
+          if (c.asr.provider === 'local' && c.asr.localModelLabel) {
+            setLabel(c.asr.localModelLabel);
+          } else if (c.asr.provider === 'tencent') {
+            setLabel('');
+          }
         }
       })
     );
@@ -290,7 +307,7 @@ export function FloatBubble() {
       window.voiceflow.stopRecording();
       return;
     }
-    if (state === 'processing') return;
+    if (state === 'processing' || state === 'loading') return;
     // idle：先检查腾讯云配置
     const config = await window.voiceflow.getConfig();
     const tencent = config?.tencentASR;
@@ -340,6 +357,27 @@ function Bubble(props: {
     return (
       <div style={wrap}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#dc2626' }}>{error}</div>
+      </div>
+    );
+  }
+
+  if (state === 'loading') {
+    return (
+      <div style={wrap}>
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            border: '3px solid rgba(91, 141, 239, 0.2)',
+            borderTop: '3px solid #5b8def',
+            borderRadius: '50%',
+            animation: 'spin 1.2s linear infinite',
+          }}
+        />
+        <div style={{ fontSize: 13, fontWeight: 600, marginTop: 8, color: '#5b8def' }}>
+          VoiceFlow 启动中…
+        </div>
+        <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>正在初始化引擎与模型</div>
       </div>
     );
   }
