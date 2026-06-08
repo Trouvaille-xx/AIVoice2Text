@@ -64,7 +64,16 @@ export function FloatBubble() {
   const [error, setError] = useState('');        // 错误消息
   const [injectResult, setInjectResult] = useState<any>(null);
   const [hotkey, setHotkey] = useState('Ctrl+Alt+Z');
-  const [hotkeyConfig, setHotkeyConfig] = useState<any>(null);
+  const [hotkeyConfig, setHotkeyConfig] = useState<any>({
+    confirmInject: 'Shift+!',
+    injectPolished: 'Shift+@',
+    cancel: 'Escape',
+    aiOptimize1: 'Alt+1',
+    aiOptimize2: 'Alt+2',
+    aiOptimize3: 'Alt+3',
+    aiOptimize4: 'Alt+4',
+    aiOptimize5: 'Alt+5',
+  });
   const [label, setLabel] = useState('');
   const [seconds, setSeconds] = useState(0);
 
