@@ -640,6 +640,13 @@ function sendToFloat(channel: string, payload?: any) {
   }
 }
 
+function broadcast(channel: string, payload?: any) {
+  sendToFloat(channel, payload);
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send(channel, payload);
+  }
+}
+
 /** 隐藏浮窗：先重置到默认录音态尺寸再 hide，避免下次 show 时以预览大尺寸闪现 */
 function hideFloatWindow() {
   if (!floatWin || floatWin.isDestroyed()) return;
@@ -1051,7 +1058,7 @@ ipcMain.handle('model:list', async () => {
 
 ipcMain.handle('model:download', async (_e, modelId: string) => {
   try {
-    await modelManager.download(modelId, (p) => sendToFloat('model:progress', p));
+    await modelManager.download(modelId, (p) => broadcast('model:progress', p));
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
