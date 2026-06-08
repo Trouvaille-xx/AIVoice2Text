@@ -786,7 +786,7 @@ function LocalModelSection({
             prog && prog.totalBytes > 0
               ? Math.floor((prog.bytesDownloaded / prog.totalBytes) * 100)
               : 0;
-          const isDownloading = downloading === m.id && prog?.state === 'downloading';
+          const isDownloading = downloading === m.id && prog?.state !== 'completed' && prog?.state !== 'failed' && prog?.state !== 'cancelled';
           const isSelected = form.asr.localModelId === m.id && m.downloaded;
           return (
             <div

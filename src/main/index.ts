@@ -393,10 +393,10 @@ async function startRecording(useAI: boolean) {
     currentPartialText = '';
     polishedCache = {};
 
-    setFloatState('recording');
     const modelInfo = BUILTIN_MODELS.find((m) => m.id === asrCfg.localModelId);
     currentAsrProvider = 'local';
     currentAsrLabel = modelInfo ? modelInfo.displayName : `🤖 ${asrCfg.localModelId}`;
+    setFloatState('recording');
     log.info(`[recording] asrProvider=local model=${asrCfg.localModelId} label=${currentAsrLabel}`);
 
     try {
@@ -463,10 +463,10 @@ async function startRecording(useAI: boolean) {
   currentPartialText = '';
   polishedCache = {};
 
-  setFloatState('recording');
-  // 记录当前会话的 ASR provider 和引擎标签（用于浮窗显示）
+  // 记录当前会话的 ASR provider 和引擎标签（用于浮窗显示）——必须先设再调 setFloatState
   currentAsrProvider = 'tencent';
   currentAsrLabel = `☁️ 腾讯云 ${asr.engineType.replace('16k_', '')}`;
+  setFloatState('recording');
   log.info(`[recording] asrProvider=${currentAsrProvider} label=${currentAsrLabel}`);
 
   try {
@@ -1270,6 +1270,9 @@ app.whenReady().then(async () => {
     log.warn(`Hotkey failed: ${failed.join(', ')}`);
   }
   log.info(`Hotkey ok: ${ok.join(', ')}`);
+
+  // 启动时注册 Esc（idle 态也需要关闭浮窗）
+  updateDynamicShortcuts('idle');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
