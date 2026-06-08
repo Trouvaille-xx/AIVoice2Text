@@ -99,34 +99,49 @@ export function useAudioCapture(active: boolean) {
     };
 
     async function start() {
-      R('info', `[audio] calling getUserMedia @ ${SAMPLE_RATE}Hz mono`);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: SAMPLE_RATE,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
+      // 复用已有 stream 和 AudioContext，避免每次录音重建（~300ms 延迟导致吃字）
+      let stream = streamRef.current;
+      if (!stream) {
+        R('info', `[audio] calling getUserMedia @ ${SAMPLE_RATE}Hz mono`);
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: SAMPLE_RATE,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        R('info', `[audio] got stream, tracks=${stream.getTracks().length}`);
+        streamRef.current = stream;
+      } else {
+        R('info', '[audio] reusing existing stream');
       }
-      R('info', `[audio] got stream, tracks=${stream.getTracks().length}`);
-      streamRef.current = stream;
 
-      const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
-      audioCtxRef.current = ctx;
-      R('info', '[audio] AudioContext created');
-      const url = getWorkletUrl();
-      R('info', `[audio] worklet url: ${url.slice(0, 50)}...`);
-      await ctx.audioWorklet.addModule(url);
-      if (cancelled) {
-        ctx.close();
-        return;
+      let ctx = audioCtxRef.current;
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        audioCtxRef.current = ctx;
+        R('info', '[audio] AudioContext created');
+      } else {
+        R('info', '[audio] reusing AudioContext');
       }
-      R('info', '[audio] worklet module added');
+
+      // worklet 模块只需加载一次
+      const url = getWorkletUrl();
+      try {
+        await ctx.audioWorklet.addModule(url);
+      } catch (e: any) {
+        // 已加载过会抛错，忽略
+        if (!e?.message?.includes('already')) throw e;
+      }
+      if (cancelled) return;
+      R('info', '[audio] worklet ready');
+
       const source = ctx.createMediaStreamSource(stream);
       const worklet = new AudioWorkletNode(ctx, 'pcm-capture', {
         numberOfInputs: 1,
@@ -146,18 +161,14 @@ export function useAudioCapture(active: boolean) {
     }
 
     function cleanup() {
+      // 只断开 worklet，保留 AudioContext 和 stream，下次录音零延迟
+      try {
+        workletRef.current?.port?.close();
+      } catch {}
       try {
         workletRef.current?.disconnect();
       } catch {}
-      try {
-        audioCtxRef.current?.close();
-      } catch {}
-      try {
-        streamRef.current?.getTracks().forEach((t) => t.stop());
-      } catch {}
       workletRef.current = null;
-      audioCtxRef.current = null;
-      streamRef.current = null;
       useVoiceflowStore.getState().setMicVolume(0);
     }
   }, [active]);
