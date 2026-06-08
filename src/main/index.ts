@@ -1091,6 +1091,89 @@ ipcMain.handle('model:delete', async (_e, modelId: string) => {
   return await modelManager.delete(modelId);
 });
 
+// ============================================================
+// GPU 加速包管理
+// ============================================================
+const GPU_CUDA_URL = 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-cublas-12.4.0-bin-x64.zip';
+
+function getBinDir(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'bin')
+    : path.join(__dirname, '../../bin');
+}
+
+ipcMain.handle('gpu:status', () => {
+  const bin = getBinDir();
+  const gpuDll = path.join(bin, 'ggml-cuda.dll');
+  return { available: require('node:fs').existsSync(gpuDll) };
+});
+
+ipcMain.handle('gpu:download', async () => {
+  const bin = getBinDir();
+  const zipPath = path.join(app.getPath('temp'), 'whisper-cuda.zip');
+  const extractDir = path.join(app.getPath('temp'), 'whisper-cuda-extract');
+
+  try {
+    // 下载
+    log.info(`[gpu] downloading CUDA package: ${GPU_CUDA_URL}`);
+    const res = await fetch(GPU_CUDA_URL);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    const total = Number(res.headers.get('content-length') || 0);
+    const file = require('node:fs').createWriteStream(zipPath);
+    const reader = res.body.getReader();
+    let downloaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      file.write(value);
+      downloaded += value.length;
+      if (total > 0) {
+        const pct = Math.round((downloaded / total) * 100);
+        sendToFloat('gpu:progress', { bytesDownloaded: downloaded, totalBytes: total, pct });
+      }
+    }
+    await new Promise<void>((r) => file.end(r));
+    log.info(`[gpu] downloaded ${(downloaded / 1e6).toFixed(1)} MB`);
+
+    // 解压到 bin/
+    const { spawnSync } = require('node:child_process');
+    require('node:fs').rmSync(extractDir, { recursive: true, force: true });
+
+    // 用 PowerShell 解压（Windows 内置）
+    const psResult = spawnSync('powershell', [
+      '-NoProfile', '-Command',
+      `Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force`,
+    ], { timeout: 120000 });
+    if (psResult.status !== 0) throw new Error('解压失败');
+
+    // 复制需要的文件到 bin/
+    const needed = [
+      'whisper-cli.exe', 'whisper.dll',
+      'ggml.dll', 'ggml-base.dll', 'ggml-cpu.dll', 'ggml-cuda.dll',
+      'cublas64_12.dll', 'cublasLt64_12.dll', 'cudart64_12.dll',
+      'nvrtc64_120_0.dll', 'nvrtc-builtins64_124.dll', 'nvblas64_12.dll',
+    ];
+    for (const f of needed) {
+      const src = path.join(extractDir, 'Release', f);
+      if (require('node:fs').existsSync(src)) {
+        require('node:fs').copyFileSync(src, path.join(bin, f));
+      }
+    }
+    log.info('[gpu] CUDA files installed to bin/');
+
+    // 清理
+    try { require('node:fs').rmSync(zipPath); } catch {}
+    try { require('node:fs').rmSync(extractDir, { recursive: true }); } catch {}
+
+    return { ok: true };
+  } catch (e: any) {
+    log.error(`[gpu] download failed: ${e.message}`);
+    try { require('node:fs').rmSync(zipPath, { force: true }); } catch {}
+    try { require('node:fs').rmSync(extractDir, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: e.message };
+  }
+});
+
 // 打开设置窗口
 ipcMain.on('open:settings', () => openSettings());
 ipcMain.on('open:history', () => createHistoryWindow());

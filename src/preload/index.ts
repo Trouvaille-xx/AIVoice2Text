@@ -75,6 +75,7 @@ const api = {
       'polish:slot',
       'config:updated',
       'model:progress',
+      'gpu:progress',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_: any, payload: any) => handler(payload);
@@ -87,6 +88,10 @@ const api = {
   downloadModel: (modelId: string): Promise<any> => ipcRenderer.invoke('model:download', modelId),
   cancelDownload: (modelId: string) => ipcRenderer.send('model:cancel', modelId),
   deleteModel: (modelId: string): Promise<boolean> => ipcRenderer.invoke('model:delete', modelId),
+
+  // GPU 加速
+  gpuStatus: (): Promise<{ available: boolean }> => ipcRenderer.invoke('gpu:status'),
+  gpuDownload: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('gpu:download'),
 
   // 发送 IPC（无返回值，用于 mouseEnter/Leave 等高频事件）
   send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),

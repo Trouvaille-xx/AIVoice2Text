@@ -10,6 +10,8 @@ declare global {
       downloadModel: (id: string) => Promise<{ ok: boolean; error?: string }>;
       cancelDownload: (id: string) => void;
       deleteModel: (id: string) => Promise<boolean>;
+      gpuStatus: () => Promise<{ available: boolean }>;
+      gpuDownload: () => Promise<{ ok: boolean; error?: string }>;
       on: (channel: string, handler: (payload: any) => void) => () => void;
       openExternal: (url: string) => void;
       [k: string]: any;
@@ -649,6 +651,76 @@ function LocalModelSection({ form, update }: { form: FormData; update: (path: st
           onChange={(e) => update('asr.threads', parseInt(e.target.value) || 4)} />
       </Field>
       <Tip>线程数建议设为 CPU 物理核心数；模型越大越吃 CPU</Tip>
+
+      <GpuAcceleration />
     </>
+  );
+}
+
+/* ───────── GPU acceleration card ───────── */
+function GpuAcceleration() {
+  const [gpu, setGpu] = useState<{ available: boolean } | null>(null);
+  const [gpuProgress, setGpuProgress] = useState<{ pct: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    window.voiceflow.gpuStatus().then((s: any) => setGpu(s));
+  }, []);
+
+  useEffect(() => {
+    return window.voiceflow.on('gpu:progress', (p: any) => {
+      setGpuProgress(p);
+    });
+  }, []);
+
+  const handleDownload = async () => {
+    setBusy(true); setError('');
+    const r = await window.voiceflow.gpuDownload();
+    setBusy(false);
+    if (r.ok) {
+      setGpu({ available: true });
+      setGpuProgress(null);
+    } else {
+      setError(r.error || '下载失败');
+    }
+  };
+
+  if (!gpu) return null;
+
+  return (
+    <div className="mt-3 px-4 py-3 rounded-xl border border-zinc-200 bg-zinc-50 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Icon d={ICONS.cpu} size={15} />
+          <span className="text-[13px] font-medium text-zinc-900">GPU 加速</span>
+          {gpu.available && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-medium">已启用</span>
+          )}
+        </div>
+        {gpu.available ? (
+          <span className="text-[11px] text-zinc-400">NVIDIA CUDA 12.4</span>
+        ) : busy ? (
+          <span className="text-[11px] text-zinc-500">
+            {gpuProgress ? `${gpuProgress.pct}%` : '准备中…'}
+          </span>
+        ) : (
+          <button onClick={handleDownload} className={btnPrimary}>
+            <Icon d={ICONS.download} size={14} />下载加速包 (~440MB)
+          </button>
+        )}
+      </div>
+      {busy && gpuProgress && (
+        <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+          <div className="h-full bg-zinc-900 rounded-full transition-all duration-300" style={{ width: `${gpuProgress.pct}%` }} />
+        </div>
+      )}
+      {error && <p className="text-[11px] text-red-500">{error}</p>}
+      {!gpu.available && !busy && (
+        <p className="text-[11px] text-zinc-400">
+          NVIDIA 显卡用户可下载 CUDA 加速包，转写速度提升 20-30 倍。
+        </p>
+      )}
+    </div>
   );
 }
