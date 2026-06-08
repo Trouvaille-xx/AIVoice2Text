@@ -136,8 +136,13 @@ export function useAudioCapture(active: boolean) {
       try {
         await ctx.audioWorklet.addModule(url);
       } catch (e: any) {
-        // 已加载过会抛错，忽略
-        if (!e?.message?.includes('already')) throw e;
+        // 已加载过抛错，忽略；真正的错误需要记录
+        if (e?.message?.includes('already')) {
+          R('info', '[audio] worklet module already loaded');
+        } else {
+          R('error', `[audio] worklet addModule failed: ${e?.message || e}`);
+          throw e;
+        }
       }
       if (cancelled) return;
       R('info', '[audio] worklet ready');

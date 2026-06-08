@@ -8,7 +8,6 @@
 import { app } from 'electron';
 import { promises as fs, createWriteStream, existsSync } from 'node:fs';
 import path from 'node:path';
-import { EventEmitter } from 'node:events';
 import log from 'electron-log/main';
 import type { LocalModelInfo, ModelDownloadProgress } from '@shared/types';
 
@@ -54,12 +53,11 @@ export const BUILTIN_MODELS: LocalModelInfo[] = [
   },
 ];
 
-export class ModelManager extends EventEmitter {
+export class ModelManager {
   private modelsDir: string;
   private activeDownloads = new Map<string, AbortController>();
 
   constructor() {
-    super();
     this.modelsDir = path.join(app.getPath('userData'), 'models');
   }
 
@@ -138,6 +136,7 @@ export class ModelManager extends EventEmitter {
       const file = createWriteStream(tmp);
       const reader = res.body.getReader();
       let downloaded = 0;
+      let lastProgressTime = 0;
       onProgress({
         modelId: id,
         state: 'downloading',
@@ -153,12 +152,17 @@ export class ModelManager extends EventEmitter {
             await new Promise<void>((r) => file.once('drain', r));
           }
           downloaded += value.length;
-          onProgress({
-            modelId: id,
-            state: 'downloading',
-            bytesDownloaded: downloaded,
-            totalBytes: total,
-          });
+          // 节流：最多每 200ms 发一次进度，避免 IPC 风暴
+          const now = Date.now();
+          if (now - lastProgressTime >= 200) {
+            lastProgressTime = now;
+            onProgress({
+              modelId: id,
+              state: 'downloading',
+              bytesDownloaded: downloaded,
+              totalBytes: total,
+            });
+          }
         }
       } finally {
         await new Promise<void>((r) => file.end(r));

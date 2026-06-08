@@ -229,34 +229,21 @@ export class LocalASRClient extends EventEmitter {
 
   /** 写 PCM16 mono 16kHz wav 文件 */
   private async writeWav(pcm: Buffer, outPath: string): Promise<void> {
-    const sampleRate = 16000;
-    const numChannels = 1;
-    const bitsPerSample = 16;
-    const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-    const blockAlign = (numChannels * bitsPerSample) / 8;
     const dataSize = pcm.length;
-
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
     header.writeUInt32LE(36 + dataSize, 4);
     header.write('WAVE', 8);
     header.write('fmt ', 12);
-    header.writeUInt32LE(16, 16);          // fmt chunk size
-    header.writeUInt16LE(1, 20);            // PCM (uncompressed)
-    header.writeUInt16LE(numChannels, 22);
-    header.writeUInt32LE(sampleRate, 24);
-    header.writeUInt32LE(byteRate, 28);
-    header.writeUInt16LE(blockAlign, 32);
-    header.writeUInt16LE(bitsPerSample, 34);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(16000, 24);
+    header.writeUInt32LE(32000, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
     header.write('data', 36);
     header.writeUInt32LE(dataSize, 40);
-
-    const fd = await fs.open(outPath, 'w');
-    try {
-      await fd.write(header);
-      await fd.write(pcm);
-    } finally {
-      await fd.close();
-    }
+    await fs.writeFile(outPath, Buffer.concat([header, pcm]));
   }
 }
