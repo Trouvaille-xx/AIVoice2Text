@@ -111,7 +111,7 @@ export function FloatBubble() {
         setState(v);
         if (typeof payload === 'object' && payload.label) setLabel(payload.label);
         if (v === 'idle') {
-          setText(''); setPolished(''); setError(''); setInjectResult(null); setPartial('');
+          setText(''); setPolished(''); setError(''); setInjectResult(null); setPartial(''); setLabel('');
         }
         if (v === 'recording') {
           setText(''); setPolished(''); setError(''); setInjectResult(null); setPartial('');
@@ -161,6 +161,14 @@ export function FloatBubble() {
         if (c?.hotkeys) {
           setHotkeyConfig(c.hotkeys);
           if (c.hotkeys.pushToTalk) setHotkey(accelToDisplay(c.hotkeys.pushToTalk));
+        }
+        // 引擎切换后更新 idle 态浮窗标签
+        if (c?.asr) {
+          if (c.asr.provider === 'local' && c.asr.localModelLabel) {
+            setLabel(c.asr.localModelLabel);
+          } else if (c.asr.provider === 'tencent') {
+            setLabel('');
+          }
         }
       })
     );

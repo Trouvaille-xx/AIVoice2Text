@@ -156,6 +156,18 @@ function createFloatWindow() {
     log.info('[window] float ready-to-show');
     floatWin?.show();
     log.info(`[window] float shown, visible=${floatWin?.isVisible()}`);
+    // 推送初始 idle 状态（让浮窗知道当前引擎）
+    const asrCfgInit = config.get('asr');
+    const modelInfoInit = asrCfgInit.provider === 'local' && asrCfgInit.localModelId
+      ? BUILTIN_MODELS.find((m) => m.id === asrCfgInit.localModelId)
+      : null;
+    sendToFloat('state:change', {
+      state: 'idle',
+      provider: asrCfgInit.provider || 'tencent',
+      label: asrCfgInit.provider === 'local' && modelInfoInit
+        ? modelInfoInit.displayName
+        : '',
+    });
   });
 
   floatWin.on('close', (e) => {
@@ -668,11 +680,9 @@ function hideFloatWindow() {
  * - idle 状态：cancel 也不注册 → Esc 释放给其他应用
  */
 function updateDynamicShortcuts(state: string) {
-  if (state === 'idle') {
-    hotkey.unregisterDynamic('cancel');
-  } else {
-    hotkey.registerDynamic('cancel');
-  }
+  // Esc 始终注册：任何状态下都可以隐藏浮窗
+  // idle 状态按 Esc = 隐藏浮窗；非 idle 状态 = 取消当前操作并隐藏
+  hotkey.registerDynamic('cancel');
 }
 
 /** 用 selectedPromptIds 中第 index 个提示词优化文本 */
@@ -1020,8 +1030,18 @@ ipcMain.handle('config:save', async (_e, newConfig) => {
     floatWin.setOpacity(opacity);
     floatWin.webContents.executeJavaScript(`document.body.style.setProperty('--opacity', '${opacity}')`);
   }
-  // 通知浮窗刷新快捷键显示
-  sendToFloat('config:updated', { hotkeys: config.get('hotkeys') });
+  // 通知浮窗刷新快捷键 + ASR 配置
+  const asrCfg = config.get('asr');
+  const modelInfo = asrCfg.provider === 'local' && asrCfg.localModelId
+    ? BUILTIN_MODELS.find((m) => m.id === asrCfg.localModelId)
+    : null;
+  broadcast('config:updated', {
+    hotkeys: config.get('hotkeys'),
+    asr: {
+      provider: asrCfg.provider,
+      localModelLabel: modelInfo?.displayName || null,
+    },
+  });
   return true;
 });
 
