@@ -172,6 +172,17 @@ export function SettingsPanel() {
     setShowPromptForm(true);
   };
 
+  /** 把 Electron accelerator 转成 Windows 用户可读格式 */
+  const displayAccel = (s: string) =>
+    s
+      .replace(/CommandOrControl/g, 'Ctrl')
+      .replace(/Control/g, 'Ctrl')
+      .replace(/Command/g, '')
+      .replace(/\+\+/g, '+')
+      .replace(/^\+/, '')
+      .replace(/\+$/, '')
+      || '未设置';
+
   useEffect(() => {
     if (!recordingKey) return;
     const handler = (e: KeyboardEvent) => {
@@ -408,7 +419,7 @@ export function SettingsPanel() {
                       className={`${inputCls} text-left font-mono text-[13px] ${
                         recordingKey === key ? 'border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900' : ''
                       }`}>
-                      {recordingKey === key ? '请按下新快捷键…' : (form.hotkeys[key as keyof typeof form.hotkeys] || '未设置')}
+                      {recordingKey === key ? '请按下新快捷键…' : displayAccel(form.hotkeys[key as keyof typeof form.hotkeys] || '')}
                     </button>
                   </Field>
                 ))}
